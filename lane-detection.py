@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import math
 from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MaxAbsScaler 
 from sklearn.model_selection  import train_test_split
 from sklearn.preprocessing import minmax_scale
 
@@ -18,7 +19,7 @@ CAMERA_HEIGHT = 240
 DATASET_FOLDER = 'driving_dataset/driving_dataset/'
 DATASET_FILENAME = DATASET_FOLDER  + 'data.txt'
 ANGLE_RESOLUTION = 0.1
-ANGLE_STEPS = int(2/ANGLE_RESOLUTION)
+ANGLE_STEPS = int(2/ANGLE_RESOLUTION)+1
 
 x = np.zeros((1,CAMERA_WIDTH*CAMERA_HEIGHT))
 y = np.zeros(1)
@@ -46,17 +47,17 @@ for line in f:
     x = np.append(x,frame,axis=0)
     y = np.append(y,[angle])
     i =i+1
-    if i==20:
+    if i==200:
         break
 
         
 # Prepare data
 print("> Prepare data")
 x = StandardScaler().fit_transform(x)
-y_norm = minmax_scale(y)*2 -1
+y_norm = MaxAbsScaler().fit_transform((StandardScaler().fit_transform(y.reshape(-1, 1))))
 y = np.zeros((y_norm.shape[0], ANGLE_STEPS))    
 for i,angle in enumerate(y_norm):
-    idx = ((ANGLE_STEPS-1)*(angle+ANGLE_RESOLUTION/2)+ANGLE_STEPS-1)/2
+    idx = (ANGLE_STEPS-1)/2*(angle)+(ANGLE_STEPS-1)/2
     y[i,math.ceil(idx)] = 1
 
 print("x shape:" + str(np.shape(x)))
@@ -82,7 +83,7 @@ model.add(Dense(units=output_units, activation='softmax'))
 
 print("> Compile and fit the Network")
 model.compile(optimizer='adam',loss='binary_crossentropy', metrics=['accuracy'])
-model.fit(x_train, y_train, epochs = 40, validation_split = .1)
+model.fit(x_train, y_train, epochs = 10, validation_split = .1)
 
 loss_and_metrics = model.evaluate(x_test, y_test, batch_size=128)
 print(loss_and_metrics)
