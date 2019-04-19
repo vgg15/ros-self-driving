@@ -12,22 +12,64 @@ from keras.models import Sequential
 
 import pandas as pd
 import os
-#video = cv2.VideoCapture("road_car_view.mp4")
+from threading import Thread
+
+DATA_X_FILENAME = 'data_x'
+DATA_Y_FILENAME = 'data_y'
 
 CAMERA_WIDTH = 320
 CAMERA_HEIGHT = 240
-DATA_X_FILENAME = 'data_x'
-DATA_Y_FILENAME = 'data_y'
+
 
 DATASET_FOLDER = 'driving_dataset/driving_dataset/'
 DATASET_FILENAME = DATASET_FOLDER  + 'data.txt'
 MODEL_FILENAME = 'model.h5'
 
 ANGLE_RESOLUTION = 0.1
+
+class ImportThread (Thread):
+   def __init__(self, id, linelist):
+      Thread.__init__(self)
+      self.linelist = linelist
+      self.id = id
+        
+   def run(self):
+        x = np.zeros((1,CAMERA_WIDTH*CAMERA_HEIGHT))
+        y = np.zeros(1)
+        i=0
+        listlen = len(self.linelist)         
+        for line in self.linelist:
+            # open image in b&w
+            row = line.split()
+            img = str(row[0])
+            angle = float(row[1])    
+            frame = cv2.imread(DATASET_FOLDER+img, cv2.COLOR_BGR2GRAY)
+            
+            # transform frame to b&w
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+            # resize frame
+            frame = cv2.resize(frame,(CAMERA_WIDTH,CAMERA_HEIGHT))
+
+            # unroll
+            frame = np.reshape(frame, (1,CAMERA_WIDTH*CAMERA_HEIGHT))
+
+            x = np.append(x,frame,axis=0)
+            y = np.append(y,[angle])
+            
+            i =i+1    
+            if self.id == 0:
+                print("Progress: {0:.2f} %".format(float(i)/listlen*100), end='\r')
+            #if i==20:
+            #    break
+        np.save(DATA_X_FILENAME+str(self.id), x)
+        np.save(DATA_Y_FILENAME+str(self.id), y)
+
+#video = cv2.VideoCapture("road_car_view.mp4")
+
 ANGLE_STEPS = int(2/ANGLE_RESOLUTION)+1
 
-x = np.zeros((1,CAMERA_WIDTH*CAMERA_HEIGHT))
-y = np.zeros(1)
+
 
 # Import data
 print("> Importing data from " + DATASET_FILENAME)
@@ -46,36 +88,26 @@ if os.path.isfile(DATA_X_FILENAME+'.npy') and os.path.isfile(DATA_Y_FILENAME+'.n
     y=np.load(DATA_Y_FILENAME+'.npy')
 else:         
     print("> Generating data files..")
+
     with open(DATASET_FILENAME) as f:
         lineList = f.readlines()
 
     listlen = len(lineList)
+    
     print("Dataset has " + str(listlen)+ " samples")
-    for line in lineList:
-        # open image in b&w
-        row = line.split()
-        img = str(row[0])
-        angle = float(row[1])    
-        frame = cv2.imread(DATASET_FOLDER+img, cv2.COLOR_BGR2GRAY)
-        
-        # transform frame to b&w
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    threadnum = 12
+    chunks = np.array_split(np.array(lineList),threadnum)
+    threads = []
+    for i in range(threadnum):
+        threads.append(ImportThread(i, chunks[i].tolist()))
+    
+    for t in threads:
+        t.start()
+    
 
-        # resize frame
-        frame = cv2.resize(frame,(CAMERA_WIDTH,CAMERA_HEIGHT))
+    for t in threads:
+        t.join()
 
-        # unroll
-        frame = np.reshape(frame, (1,CAMERA_WIDTH*CAMERA_HEIGHT))
-
-        x = np.append(x,frame,axis=0)
-        y = np.append(y,[angle])
-        
-        i =i+1
-        print("Progress: {0:.2f} %".format(float(i)/listlen*100), end='\r')
-        #if i==20:
-        #    break
-    np.save(DATA_X_FILENAME, x)
-    np.save(DATA_Y_FILENAME, y)
 
     """f = open(DATA_X_FILENAME, "w")
     for i in range(x.shape[0]):
