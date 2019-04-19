@@ -11,13 +11,18 @@ from keras.layers import Dense
 from keras.models import Sequential
 
 import pandas as pd
-
+import os
 #video = cv2.VideoCapture("road_car_view.mp4")
 
 CAMERA_WIDTH = 320
 CAMERA_HEIGHT = 240
+DATA_X_FILENAME = 'data_x'
+DATA_Y_FILENAME = 'data_y'
+
 DATASET_FOLDER = 'driving_dataset/driving_dataset/'
 DATASET_FILENAME = DATASET_FOLDER  + 'data.txt'
+MODEL_FILENAME = 'model.h5'
+
 ANGLE_RESOLUTION = 0.1
 ANGLE_STEPS = int(2/ANGLE_RESOLUTION)+1
 
@@ -26,31 +31,62 @@ y = np.zeros(1)
 
 # Import data
 print("> Importing data from " + DATASET_FILENAME)
-f = open(DATASET_FILENAME)
+#f = open(DATASET_FILENAME)
 i = 0
-for line in f:
-    # open image in b&w
-    row = line.split()
-    img = str(row[0])
-    angle = float(row[1])    
-    frame = cv2.imread(DATASET_FOLDER+img, cv2.COLOR_BGR2GRAY)
-    
-    # transform frame to b&w
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    # resize frame
-    frame = cv2.resize(frame,(CAMERA_WIDTH,CAMERA_HEIGHT))
+if os.path.isfile(DATA_X_FILENAME+'.npy') and os.path.isfile(DATA_Y_FILENAME+'.npy'):    
+    """with open(DATA_X_FILENAME) as f:
+        xlist = f.readlines()
+        x = np.array(xlist)
+    with open(DATA_Y_FILENAME) as f:
+        ylist = f.readlines()
+        y = np.array(ylist)"""
+    print("> Found data files..")
+    x= np.load(DATA_X_FILENAME+'.npy')
+    y=np.load(DATA_Y_FILENAME+'.npy')
+else:         
+    print("> Generating data files..")
+    with open(DATASET_FILENAME) as f:
+        lineList = f.readlines()
 
-    # unroll
-    frame = np.reshape(frame, (1,CAMERA_WIDTH*CAMERA_HEIGHT))
-
-    x = np.append(x,frame,axis=0)
-    y = np.append(y,[angle])
-    i =i+1
-    if i==200:
-        break
-
+    listlen = len(lineList)
+    print("Dataset has " + str(listlen)+ " samples")
+    for line in lineList:
+        # open image in b&w
+        row = line.split()
+        img = str(row[0])
+        angle = float(row[1])    
+        frame = cv2.imread(DATASET_FOLDER+img, cv2.COLOR_BGR2GRAY)
         
+        # transform frame to b&w
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # resize frame
+        frame = cv2.resize(frame,(CAMERA_WIDTH,CAMERA_HEIGHT))
+
+        # unroll
+        frame = np.reshape(frame, (1,CAMERA_WIDTH*CAMERA_HEIGHT))
+
+        x = np.append(x,frame,axis=0)
+        y = np.append(y,[angle])
+        
+        i =i+1
+        print("Progress: {0:.2f} %".format(float(i)/listlen*100), end='\r')
+        #if i==20:
+        #    break
+    np.save(DATA_X_FILENAME, x)
+    np.save(DATA_Y_FILENAME, y)
+
+    """f = open(DATA_X_FILENAME, "w")
+    for i in range(x.shape[0]):
+        f.write(str(np.array2string(x[i,:], separator=' ', threshold = CAMERA_WIDTH*CAMERA_HEIGHT*10))+'\n')
+    f.close
+    f = open(DATA_Y_FILENAME, "w")
+    for i in range(y.shape[0]):
+        f.write(str(y[i]) + '\n')
+    f.close"""
+    
+
 # Prepare data
 print("> Prepare data")
 x = StandardScaler().fit_transform(x)
@@ -65,9 +101,8 @@ print("x sample: ")
 print(np.random.permutation(x)[1:5,:])
 
 print("y shape:" + str(np.shape(y)))
+print(np.random.permutation(y)[1:5,:])
 
-print(y_norm[1:5])
-print(y[1:5,:])
 x_train, x_test, y_train, y_test = train_test_split(x, y, test_size = .1)
 
 # build simple NN
@@ -82,8 +117,9 @@ model.add(Dense(units=inner_units, activation='relu'))
 model.add(Dense(units=output_units, activation='softmax'))
 
 print("> Compile and fit the Network")
-model.compile(optimizer='adam',loss='binary_crossentropy', metrics=['accuracy'])
+model.compile(loss=keras.losses.categorical_crossentropy, optimizer='adam', metrics=['accuracy'])
 model.fit(x_train, y_train, epochs = 10, validation_split = .1)
+model.save(MODEL_FILENAME)
 
 loss_and_metrics = model.evaluate(x_test, y_test, batch_size=128)
 print(loss_and_metrics)
