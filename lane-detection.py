@@ -26,7 +26,8 @@ DATA_Y_FILENAME = 'data_y'
 CAMERA_WIDTH = 320
 CAMERA_HEIGHT = 240
 
-NUM_THREADS = 2
+NUM_THREADS = 4
+NUM_BATCH = 16
 
 DATASET_FOLDER = 'driving_dataset/driving_dataset/'
 DATASET_FILENAME = DATASET_FOLDER  + 'data.txt'
@@ -35,14 +36,14 @@ MODEL_FILENAME = 'model.h5'
 ANGLE_RESOLUTION = 0.1
 ANGLE_STEPS = int(2/ANGLE_RESOLUTION)+1
 
-def print_progress(progress):
+def print_progress(progress, curr_epoch, tot_epoch, eta):
     totpercent = 0.0
     for id, percent in progress.items():
         totpercent = totpercent + percent
 
-    totpercent = totpercent/NUM_THREADS
+    totpercent = int(totpercent/NUM_THREADS)
     bar = ('=' * int(totpercent/5)).ljust(20)        
-    sys.stdout.write("\rTotal progress [%s] %s%%" % (bar, totpercent))    
+    sys.stdout.write("\rEpoch %s/%s, Total progress [%s] %s%%, elapsed: %s" % (curr_epoch, tot_epoch, bar, totpercent, eta))    
     sys.stdout.flush()
 
 class ImportThread (Thread):
@@ -57,7 +58,7 @@ class ImportThread (Thread):
     def run(self):        
         i=0
         listlen = len(self.linelist)          
-        print("Thread " + str(self.id) + " started with " + str(listlen) + " elements")                        
+        #print("Thread " + str(self.id) + " started with " + str(listlen) + " elements")                        
 
         for line in self.linelist:            
             row = line.split()
@@ -82,7 +83,7 @@ class ImportThread (Thread):
             time.sleep(0.01)
     
     def save(self):       
-        print("Thread " + str(self.id) + " saving data...")               
+        #print("Thread " + str(self.id) + " saving data...")               
         np.save(DATA_X_FILENAME+"_"+str(self.id), np.around(np.array(self.xlist), decimals=4))
         np.save(DATA_Y_FILENAME+"_"+str(self.id), np.around(np.array(self.ylist), decimals=4))
 
@@ -120,28 +121,39 @@ def main():
         status = Queue()
         progress = collections.OrderedDict()
         
-        chunks = np.array_split(np.array(lineList), NUM_THREADS)
-        threads = []
-        for i in range(NUM_THREADS):
-            t = ImportThread(i, chunks[i].tolist(), status)
-            threads.append(t)
-            progress[i] = 0.0
-            t.daemon = True
-            t.start()
-
-        while any(i.is_alive() for i in threads):
-            time.sleep(1)
-            while not status.empty():
-                id, percent = status.get()
-                progress[id] = percent
-                print_progress(progress)
+        chunks = np.array_split(np.array(lineList), NUM_BATCH)
         
-        print("")                
-        for t in threads:
-            t.save()
 
-        for t in threads:
-            t.join()
+        i=0
+        epoch = 1
+        tot_epoch = int(NUM_BATCH/NUM_THREADS)
+        while (i < len(chunks)):
+            #print("Run Epoch " + str(epoch) + "/" + str(len(chunks)/NUM_THREADS), end='') 
+            threads = []
+            for j in range(NUM_THREADS):
+                t = ImportThread(i, chunks[i].tolist(), status)
+                threads.append(t)
+                progress[i] = 0.0
+                t.daemon = True
+                t.start()
+                i=i+1
+
+            while any(i.is_alive() for i in threads):
+                time.sleep(1)
+                while not status.empty():
+                    id, percent = status.get()
+                    progress[id] = percent/tot_epoch
+                    millis2 = int(round(time.time() * 1000))
+                    print_progress(progress, epoch, tot_epoch, (millis2-millis)/1000)
+            for t in threads:
+                t.save()
+
+            for t in threads:
+                t.join()
+            
+            epoch = epoch + 1
+
+        print("")               
 
         millis2 = int(round(time.time() * 1000))                
         print("> Generation done in %s seconds" % str((millis2-millis)/1000))
