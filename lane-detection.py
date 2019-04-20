@@ -19,9 +19,12 @@ from os import system, name
 from threading import Thread
 from queue import Queue
 import collections
+import glob
 
-DATA_X_FILENAME = 'data_x'
-DATA_Y_FILENAME = 'data_y'
+OUTPUT_DIR = 'output/'
+DATA_X_FILENAME = OUTPUT_DIR + 'data_x'
+DATA_Y_FILENAME = OUTPUT_DIR + 'data_y'
+NUMPY_EXT = '.npy'
 
 CAMERA_WIDTH = 320
 CAMERA_HEIGHT = 240
@@ -105,25 +108,40 @@ def main():
     # Import data
     print("> Importing data from " + DATASET_FILENAME)
     
-    if os.path.isfile(DATA_X_FILENAME+'.npy') and os.path.isfile(DATA_Y_FILENAME+'.npy'):    
-        print("> Importing existing data files...")
-        x = np.load(DATA_X_FILENAME+'.npy')
-        y = np.load(DATA_Y_FILENAME+'.npy') 
-    else:         
+    if os.path.isdir(OUTPUT_DIR):
+        print("> Output folder already exists, skipping...")
+    else:   
+        os.mkdir(OUTPUT_DIR)
         print("> Generating new data files..")
         millis = int(round(time.time() * 1000))
         with open(DATASET_FILENAME) as f:
-            lineList = f.readlines()
+            linelist = f.readlines()
 
-        listlen = len(lineList)
+        listlen = len(linelist)
         
         print("Dataset has " + str(listlen)+ " samples")
         status = Queue()
         progress = collections.OrderedDict()
         
-        chunks = np.array_split(np.array(lineList), NUM_BATCH)
+        x = []
+        y = []
+        for line in linelist:
+            x.append(line.split()[0])
+            y.append(line.split()[1])
         
+        y = np.array(y)
+        y_norm = MaxAbsScaler().fit_transform((StandardScaler().fit_transform(y.reshape(-1, 1))))        
 
+        y = y_norm.tolist()
+
+        dataset = []        
+        for i in range(len(x)):
+            dataset.append(str(x[i])+ " " + str(y[i]).replace('[','').replace(']',''))
+        
+        dataset = np.random.permutation(np.array(dataset))
+        print(dataset[1:5])        
+        chunks = np.array_split(dataset, NUM_BATCH)
+        
         i=0
         epoch = 1
         tot_epoch = int(NUM_BATCH/NUM_THREADS)
@@ -157,39 +175,20 @@ def main():
 
         millis2 = int(round(time.time() * 1000))                
         print("> Generation done in %s seconds" % str((millis2-millis)/1000))
-
-        exit()
-    print("x shape:" + str(np.shape(x)))
-    print("x samples: ")
-    print(np.random.permutation(x)[1:5,:])
-
-    print("y shape:" + str(np.shape(y)))
-    print("y samples: ")
-    print(np.random.permutation(y)[1:5])
     
     # Prepare data
-    print("> Preparing data")
-    #x = StandardScaler().fit_transform(x)
-    y_norm = MaxAbsScaler().fit_transform((StandardScaler().fit_transform(y.reshape(-1, 1))))
-    y = np.zeros((y_norm.shape[0], ANGLE_STEPS))    
+    batch_list = sorted(glob.glob(OUTPUT_DIR+'*'+NUMPY_EXT))
+    if (len(batch_list) != 2*NUM_BATCH):
+        print("> Some data elements are missing. exiting...")
+        exit()
+
+    exit()
     for i,angle in enumerate(y_norm):
         idx = (ANGLE_STEPS-1)/2*(angle)+(ANGLE_STEPS-1)/2
         y[i,math.ceil(idx)] = 1
 
-    print("x shape:" + str(np.shape(x)))
-    print("x samples: ")
-    print(np.random.permutation(x)[1:5,:])
-
-    print("y shape:" + str(np.shape(y)))
-    print("y samples: ")
-    print(np.random.permutation(y)[1:5]) 
-
-    #print("> Saving normalized data...")
-    #np.save(DATA_X_FILENAME+"_norm", np.around(x, decimals=4))
-    #np.save(DATA_Y_FILENAME+"_norm", np.around(y, decimals=4))
-
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size = .2)
-    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size = .2)
+    #x_train, x_test, y_train, y_test = train_test_split(x, y, test_size = .2, shuffle=True)
+    #x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size = .2)
 
     # build simple NN
     print("> Build Network")
