@@ -20,6 +20,7 @@ from threading import Thread
 from queue import Queue
 import collections
 import glob
+import glob
 
 OUTPUT_DIR = 'output/'
 DATA_X_FILENAME = OUTPUT_DIR + 'data_x'
@@ -90,18 +91,16 @@ class ImportThread (Thread):
         np.save(DATA_X_FILENAME+"_"+str(self.id), np.around(np.array(self.xlist), decimals=4))
         np.save(DATA_Y_FILENAME+"_"+str(self.id), np.around(np.array(self.ylist), decimals=4))
 
-def KerasGenerator(x,y, bs):
+def BatchGenerator(batch_x, batch_y):
     i=0
-    totlen = len(x)
+    batch_len = len(batch_x)
     while True:
-        img = []
-        labels = []
-        while len(img) < bs:
-            img.append(x[i,:]/255.0)
-            labels.append(y[i,:])
-            i = i + 1
-            if i >= totlen:
-                i=0
+        img = np.load(batch_x[i])
+        img = img/255.0
+        labels = np.load(batch_y[i])
+        i = i + 1
+        if i >= batch_len:
+            i=0
         yield (img, labels)
 
 def main():
@@ -177,39 +176,39 @@ def main():
         print("> Generation done in %s seconds" % str((millis2-millis)/1000))
     
     # Prepare data
-    batch_list = sorted(glob.glob(OUTPUT_DIR+'*'+NUMPY_EXT))
-    if (len(batch_list) != 2*NUM_BATCH):
+    x_batch_list = sorted(glob.glob(DATA_X_FILENAME+'*'))
+    y_batch_list = sorted(glob.glob(DATA_Y_FILENAME+'*'))
+
+    if ((len(x_batch_list) != NUM_BATCH) and (len(y_batch_list) != NUM_BATCH)):
         print("> Some data elements are missing. exiting...")
         exit()
 
-    exit()
-    for i,angle in enumerate(y_norm):
-        idx = (ANGLE_STEPS-1)/2*(angle)+(ANGLE_STEPS-1)/2
-        y[i,math.ceil(idx)] = 1
+    #for i,angle in enumerate(y_norm):
+    #    idx = (ANGLE_STEPS-1)/2*(angle)+(ANGLE_STEPS-1)/2
+    #    y[i,math.ceil(idx)] = 1
 
-    #x_train, x_test, y_train, y_test = train_test_split(x, y, test_size = .2, shuffle=True)
-    #x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size = .2)
+    x_train, x_test, y_train, y_test = train_test_split(x_batch_list, y_batch_list, test_size = .1)
+    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size = .1)
 
     # build simple NN
-    print("> Build Network")
-    input_units = x_train.shape[1]
+    input_units = CAMERA_WIDTH*CAMERA_HEIGHT
     inner_units = int(input_units/10)
     output_units = ANGLE_STEPS # angle ranges from -1 to 1 in steps of 0.1
 
+    bg_train = BatchGenerator(x_train, y_train)
+    bg_val = BatchGenerator(x_val, y_val)
+    
     """
+    print("> Build Network")
     model = Sequential()
     model.add(Dense(units=inner_units, activation='relu', input_dim=input_units))
     model.add(Dense(units=inner_units, activation='relu'))
     model.add(Dense(units=output_units, activation='softmax'))
 
     print("> Compile and fit the Network")
-    BATCH_SIZE = 64
-    kg_train = KerasGenerator(x_train, y_train, bs)
-    kg_val = KerasGenerator(x_val,y_val, bs)
-    
     model.compile(loss=keras.losses.categorical_crossentropy, optimizer='adam', metrics=['accuracy'])
-    model.fit_generator( kg_train, steps_per_epoch=math.ceil(len(x_train) / BATCH_SIZE),
-        validation_data=kg_val,
+    model.fit_generator( bg_train, steps_per_epoch=math.ceil(len(x_train) / BATCH_SIZE),
+        validation_data=bg_val,
 	    validation_steps=math.ceil(len(x_train) / BATCH_SIZE),
 	    epochs=5)        
 
