@@ -84,6 +84,13 @@ class ImportThread (Thread):
             
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
+            pts1 = np.float32([[90,110],[CAMERA_WIDTH-90,110],[0,CAMERA_HEIGHT-60],[CAMERA_WIDTH,CAMERA_HEIGHT-60]])
+            pts2 = np.float32([[0,0],[CAMERA_WIDTH,0],[0,CAMERA_HEIGHT],[CAMERA_WIDTH,CAMERA_HEIGHT]])
+    
+    
+            M = cv2.getPerspectiveTransform(pts1,pts2)
+            frame = cv2.warpPerspective(frame,M,(CAMERA_WIDTH,CAMERA_HEIGHT))
+
             # unroll
             frame = np.reshape(frame, (1,CAMERA_WIDTH*CAMERA_HEIGHT))
             
@@ -240,8 +247,8 @@ def main():
         model.add(Dense(units=int(input_units/100), activation='relu'))
         model.add(Dense(units=int(512), activation='relu'))
         model.add(Dense(units=int(125), activation='relu'))
-        #model.add(Dense(units=output_units, activation='softmax'))
-        model.add(Dense(units=1, activation='linear'))
+        model.add(Dense(units=output_units, activation='softmax'))
+model.add(Dense(units=1, activation='linear'))
         print("> Compile and fit the Network")
         hist = History()
         model.compile(loss=keras.losses.mean_squared_error, optimizer='SGD', metrics=['accuracy'])
