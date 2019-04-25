@@ -111,20 +111,21 @@ class ImportThread (Thread):
         np.save(DATA_X_FILENAME+"_"+str(self.id), np.around(np.array(self.xlist), decimals=4))
         np.save(DATA_Y_FILENAME+"_"+str(self.id), np.around(np.array(self.ylist), decimals=4))
 
-def BatchGenerator(batch_x, batch_y):
+def BatchGenerator(batch_x, batch_y, setname):
     loopiter=0
     batch_len = len(batch_x)
-    #print("generator started with len " + str(batch_len))
+    print("generator " + setname + " started with " + str(batch_x) +  str(batch_y))
     while True:
-        #print("generator " + str(loopiter))
+        #print("generator " + setname + ": "+str(batch_x[loopiter]) + " " + str(batch_y[loopiter]))
         img = np.load(batch_x[loopiter])
         img = img/255.0
         labels = np.load(batch_y[loopiter])
-        """y = np.zeros((labels.shape[0], ANGLE_STEPS))
+        y = np.zeros((labels.shape[0], ANGLE_STEPS))
         for i,angle in enumerate(labels):
             idx = (ANGLE_STEPS-1)/2*(angle)+(ANGLE_STEPS-1)/2
             y[i,math.ceil(idx)] = 1
-        """
+        
+        labels = y
         loopiter = loopiter + 1
         if loopiter >= batch_len:
             loopiter=0
@@ -173,7 +174,7 @@ def BatchDataGeneration(dataFilename):
     with open(dataFilename) as f:
         linelist = f.readlines()
 
-    #linelist = linelist[1:500]
+    #linelist = linelist[1:100]
     listlen = len(linelist)
     
     DATASET_SIZE = listlen
@@ -261,8 +262,8 @@ def NNCreateModel():
     model.add(Dropout(0.3))
     model.add(Dense(units=int(512), activation='relu'))
     model.add(Dropout(0.2))
-    #model.add(Dense(units=output_units, activation='softmax'))
-    model.add(Dense(units=1, activation='linear'))
+    model.add(Dense(units=output_units, activation='softmax'))
+    #model.add(Dense(units=1, activation='linear'))
         
     # Model configuration
     loss = 'mse'
@@ -298,18 +299,21 @@ def NNFitModel(model, modelname, x_batch_list, y_batch_list):
     x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size = .1)
 
     # Instatiate batch generators for the model
-    bg_train = BatchGenerator(x_train, y_train)
-    bg_val   = BatchGenerator(x_val, y_val)    
-    bg_test  = BatchGenerator(x_test, y_test)
+    bg_train = BatchGenerator(x_train, y_train, 'train')
+    bg_val   = BatchGenerator(x_val, y_val, 'val')    
+    bg_test  = BatchGenerator(x_test, y_test, 'test')
 
     epochs = 200
     checkpoint = ModelCheckpoint(modelname, monitor='loss', verbose=1, save_best_only=True, mode='auto')
     callbacks_list = [checkpoint]
 
     hist = History()
-    hist = model.fit_generator( bg_train, steps_per_epoch=NUM_BATCH,
+    train_steps = len(x_train)
+    val_steps = len(x_val)
+
+    hist = model.fit_generator( bg_train, steps_per_epoch=train_steps,
         validation_data=bg_val,
-        validation_steps=NUM_BATCH,
+        validation_steps=val_steps,
         epochs=epochs,
         callbacks=callbacks_list)        
 
