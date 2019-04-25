@@ -387,7 +387,11 @@ def main():
     
     predictions = model.predict(x)
     print (predictions[1:5])
-    print(y[1:5])
-    
+    for i in range(5):
+        idx = np.argmax(predictions[i])
+        y_pred = (idx-((ANGLE_STEPS-1)/2))/((ANGLE_STEPS-1)/2)
+        print("pred: %.2f" % y_pred)
+        print("y: %.2f" % y[i])
+            
 if __name__ == "__main__":
     main()
