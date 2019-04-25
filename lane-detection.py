@@ -4,6 +4,7 @@ import numpy as np
 import math
 import time
 import sys
+import json
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import MaxAbsScaler 
@@ -13,6 +14,7 @@ from keras.utils import plot_model
 from keras.models import load_model
 from keras import optimizers
 import matplotlib.pyplot as plt
+from keras.callbacks import *
 
 import keras
 from keras.layers import Dense, Dropout
@@ -21,7 +23,7 @@ from keras.callbacks import History
 import os
 from os import system, name 
 from threading import Thread
-from queue import Queue
+from multiprocessing import Queue
 import collections
 import glob
 import glob
@@ -35,7 +37,7 @@ CAMERA_WIDTH = 320
 CAMERA_HEIGHT = 320
 
 NUM_THREADS = 4
-NUM_BATCH = 256
+NUM_BATCH = 16
 
 DATASET_FOLDER = 'bag_output/'
 DATASET_FILENAME = DATASET_FOLDER  + 'data.txt'
@@ -179,6 +181,7 @@ def BatchDataGeneration(dataFilename):
     print("  Dataset has " + str(listlen)+ " samples")
             
     # Normalize angle values
+    """
     x = []
     y = []
     for line in linelist:
@@ -193,6 +196,8 @@ def BatchDataGeneration(dataFilename):
     for i in range(len(x)):
         dataset.append(str(x[i])+ " " + str(y[i]).replace('[','').replace(']',''))
     
+    """
+    dataset = linelist
     # shuffle the data randomly
     dataset = np.random.permutation(np.array(dataset))
     
@@ -238,7 +243,56 @@ def BatchDataGeneration(dataFilename):
     millis2 = int(round(time.time() * 1000))                
     print("> Generation done in %s seconds" % str((millis2-millis)/1000))
 
-def NNCreateModel(x_batch_list, y_batch_list):
+def NNCreateModel():
+    global DATASET_SIZE
+
+    # build NN
+    input_units = CAMERA_WIDTH*CAMERA_HEIGHT
+    output_units = ANGLE_STEPS # angle ranges from -1 to 1 in steps of 0.1
+
+    print("> Build Network")
+
+    # Model Architecture
+    model = Sequential()
+    model.add(Dense(units=int(input_units/100), activation='relu', input_dim=input_units))
+    model.add(Dense(units=int(input_units/100), activation='relu'))
+    model.add(Dropout(0.3))
+    model.add(Dense(units=int(512), activation='relu'))
+    model.add(Dropout(0.3))
+    model.add(Dense(units=int(512), activation='relu'))
+    model.add(Dropout(0.2))
+    #model.add(Dense(units=output_units, activation='softmax'))
+    model.add(Dense(units=1, activation='linear'))
+        
+    # Model configuration
+    loss = 'mse'
+    #optimizer='adam'
+    optimizer = optimizers.SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True)
+    model.compile(loss=loss, optimizer=optimizer, metrics=['accuracy'])
+
+    return model
+
+class My_Callback(keras.callbacks.Callback):
+    def on_train_begin(self, logs={}):
+        return
+ 
+    def on_train_end(self, logs={}):
+        return
+ 
+    def on_epoch_begin(self, logs={}):
+        return
+ 
+    def on_epoch_end(self, epoch, logs={}):
+        return
+ 
+    def on_batch_begin(self, batch, logs={}):
+        return
+ 
+    def on_batch_end(self, batch, logs={}):
+        self.losses.append(logs.get('loss'))
+        return
+
+def NNFitModel(model, modelname, x_batch_list, y_batch_list):
     # Split dataset in train/val/test sets
     x_train, x_test, y_train, y_test = train_test_split(x_batch_list, y_batch_list, test_size = .1)
     x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size = .1)
@@ -248,82 +302,88 @@ def NNCreateModel(x_batch_list, y_batch_list):
     bg_val   = BatchGenerator(x_val, y_val)    
     bg_test  = BatchGenerator(x_test, y_test)
 
-    # build NN
-    input_units = CAMERA_WIDTH*CAMERA_HEIGHT
-    output_units = ANGLE_STEPS # angle ranges from -1 to 1 in steps of 0.1
-
-    print("> Build Network")
-    # Model Architecture
-    model = Sequential()
-    model.add(Dense(units=int(input_units/100), activation='relu', input_dim=input_units))
-    model.add(Dense(units=int(512), activation='relu'))
-    model.add(Dense(units=int(256), activation='relu'))
-    #model.add(Dropout(0.3))
-    model.add(Dense(units=int(128), activation='relu'))
-    #model.add(Dropout(0.2))
-    #model.add(Dense(units=output_units, activation='softmax'))
-    model.add(Dense(units=1, activation='linear'))
-    
-    print("> Compile and fit the Network")
-    
-    # Model configuration
-    loss = keras.losses.mean_squared_error
-    epochs = 20
-    
-    optimizer = optimizers.SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True)
-    model.compile(loss=loss, optimizer=optimizer, metrics=['accuracy'])
+    epochs = 200
+    checkpoint = ModelCheckpoint(modelname, monitor='loss', verbose=1, save_best_only=True, mode='auto')
+    callbacks_list = [checkpoint]
 
     hist = History()
     hist = model.fit_generator( bg_train, steps_per_epoch=NUM_BATCH,
         validation_data=bg_val,
         validation_steps=NUM_BATCH,
-        epochs=epochs)        
-    
+        epochs=epochs,
+        callbacks=callbacks_list)        
+
+    return (model, hist.history)
+
+def NNSaveModel(model, modelname, hist):        
     # Save the model
-    modelName = "Model_" + "mse" + "_" + "sgd" + "_epochs" + epochs + "bs" + int(DATASET_SIZE/NUM_BATCH)
-    plot_model(model, to_file=modelName+'.png', show_shapes=True)
-    model.save(modelName + ".h5")
-                
+    #odelName = "Model_" + loss + "_" + optimizer + "_epochs" + str(epochs) + "_bs" + str(int(DATASET_SIZE/NUM_BATCH))
+    plot_model(model, to_file=modelname+'.png', show_shapes=True)
+    model.save(modelname)
+
+    json.dump(hist, open(modelname+".hist", 'w'))
+
     # Plot training & validation accuracy values
-    plt.plot(hist.history['acc'])
-    plt.plot(hist.history['val_acc'])
+    plt.plot(hist['acc'])
+    plt.plot(hist['val_acc'])
     plt.title('Model accuracy')
     plt.ylabel('Accuracy')
     plt.xlabel('Epoch')
     plt.legend(['Train', 'Val'], loc='upper left')
-    plt.savefig(modelName+'_accuracy.png')
+    plt.savefig(modelname+'_accuracy.png')
 
     # Plot training & validation loss values
     plt.figure()
-    plt.plot(hist.history['loss'])
-    plt.plot(hist.history['val_loss'])
+    plt.plot(hist['loss'])
+    plt.plot(hist['val_loss'])
     plt.title('Model loss')
     plt.ylabel('Loss')
     plt.xlabel('Epoch')
     plt.legend(['Train', 'Val'], loc='upper left')
-    plt.savefig(modelName+'_loss.png')
+    plt.savefig(modelname+'_loss.png')
     plt.show()
 
-    return model
-
 def main():    
-    modelname = glob.glob('model*.h5')
-    if (len(modelname) != 0):
-        print("> Loading existing NN model...")        
-        model = load_model(modelname[0])        
+    #modelname = glob.glob('model*.h5')
+    modelname=""
+    if len(sys.argv) > 1:
+        modelname = sys.argv[1]
+    
+    x_batch_list = sorted(glob.glob(DATA_X_FILENAME+'*'))
+    y_batch_list = sorted(glob.glob(DATA_Y_FILENAME+'*'))
+
+    if (os.path.isfile(modelname)):
+        print("> Loading existing NN model " + modelname)        
+        model = load_model(modelname)        
     else:        
         print("> Generating new NN model...")
     
-        x_batch_list = sorted(glob.glob(DATA_X_FILENAME+'*'))
-        y_batch_list = sorted(glob.glob(DATA_Y_FILENAME+'*'))
-
         if os.path.isdir(OUTPUT_DIR) and ((len(x_batch_list) == NUM_BATCH) and (len(y_batch_list) == NUM_BATCH)):
             print("> Found already existing batch files")
         else:
             print("> Some batch data elements are missing or number of batch has changed")        
             BatchDataGeneration(DATASET_FILENAME)
         
-        model = NNCreateModel(x_batch_list, y_batch_list) 
- 
+        model = NNCreateModel() 
+    
+    if sys.argv[2] == "1":
+        print("> Fitting model "+ modelname)
+        model, hist = NNFitModel(model, modelname, x_batch_list, y_batch_list)
+        NNSaveModel(model, modelname, hist)
+    
+    """if (os.path.isfile(modelname+'.hist')):
+        print("> Load previous history file")
+        prev_hist = json.load(open(modelname+'.hist', 'r'))
+        prev_hist.update(hist)
+    """
+    
+
+    x = np.load(x_batch_list[0])
+    y = np.load(y_batch_list[0])
+    
+    predictions = model.predict(x)
+    print (predictions[1:5])
+    print(y[1:5])
+    
 if __name__ == "__main__":
     main()
