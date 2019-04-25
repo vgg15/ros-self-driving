@@ -11,11 +11,11 @@ from sklearn.model_selection  import train_test_split
 from sklearn.preprocessing import minmax_scale
 from keras.utils import plot_model
 from keras.models import load_model
-
+from keras import optimizers
 import matplotlib.pyplot as plt
 
 import keras
-from keras.layers import Dense
+from keras.layers import Dense, Dropout
 from keras.models import Sequential
 from keras.callbacks import History
 import os
@@ -37,12 +37,14 @@ CAMERA_HEIGHT = 320
 NUM_THREADS = 4
 NUM_BATCH = 256
 
-DATASET_FOLDER = './'
+DATASET_FOLDER = 'bag_output/'
 DATASET_FILENAME = DATASET_FOLDER  + 'data.txt'
-MODEL_FILENAME = 'model.h5'
 
 ANGLE_RESOLUTION = 0.1
 ANGLE_STEPS = int(2/ANGLE_RESOLUTION)+1
+
+# Global variable
+DATASET_SIZE = 0
 
 def print_progress(progress, curr_epoch, tot_epoch, eta):
     totpercent = 0.0
@@ -116,193 +118,212 @@ def BatchGenerator(batch_x, batch_y):
         img = np.load(batch_x[loopiter])
         img = img/255.0
         labels = np.load(batch_y[loopiter])
-        y = np.zeros((labels.shape[0], ANGLE_STEPS))
+        """y = np.zeros((labels.shape[0], ANGLE_STEPS))
         for i,angle in enumerate(labels):
             idx = (ANGLE_STEPS-1)/2*(angle)+(ANGLE_STEPS-1)/2
             y[i,math.ceil(idx)] = 1
+        """
         loopiter = loopiter + 1
         if loopiter >= batch_len:
             loopiter=0
-        yield (img, y)
+        yield (img, labels)
 
-def main():
-    # Import data
-    print("> Importing data from " + DATASET_FILENAME)
+"""
+Normalize input data:
+- remove mean
+- divide by standard deviation
+- move to -1:1 range
+"""
+def Normalize(data):
+    y = np.array(data)
+
+    StdScaler = StandardScaler()
+    MaxScaler = MaxAbsScaler()
+    y_norm = StdScaler.fit_transform(y.reshape(-1, 1)) # remove the mean
+    y_norm = MaxScaler.fit_transform(y_norm)           # shrink to the -1:1 range       
+    y_norm = y_norm.tolist()
     
-    if os.path.isdir(OUTPUT_DIR):
-        print("> Output folder already exists, skipping...")
-    else:   
+    # Get normalization parameters
+    y_std_dev = StdScaler.var_[0]
+    y_mean    = StdScaler.mean_[0]
+    y_scaling = MaxScaler.max_abs_[0]
+
+    return (y_norm, y_std_dev, y_mean, y_scaling)
+
+"""
+Generate batch files with intemediate data preprocessing such as:
+    - normalization
+Returns: 
+"""
+def BatchDataGeneration(dataFilename):
+    global DATASET_SIZE
+
+    # Get execution time
+    millis = int(round(time.time() * 1000))
+    
+    try:
         os.mkdir(OUTPUT_DIR)
-        print("> Generating new data files..")
-        millis = int(round(time.time() * 1000))
-        with open(DATASET_FILENAME) as f:
-            linelist = f.readlines()
+    except FileExistsError:
+        pass
 
-        #linelist = linelist[1:500]
-        listlen = len(linelist)
-        
-        print("Dataset has " + str(listlen)+ " samples")
-        status = Queue()
-        progress = collections.OrderedDict()
-        
-        x = []
-        y = []
-        for line in linelist:
-            x.append(line.split()[0])
-            y.append(line.split()[1])
-        
-        y = np.array(y)
-        #StdScaler = StandardScaler()
-        #MaxScaler = MaxAbsScaler()
-        y_norm = MaxAbsScaler().fit_transform((StandardScaler().fit_transform(y.reshape(-1, 1))))        
+    # Open data file. The file is in the format:
+    #   <image_name>.<format> <steering angle[float]>
+    with open(dataFilename) as f:
+        linelist = f.readlines()
 
-        y = y_norm.tolist()
-
-        dataset = []        
-        for i in range(len(x)):
-            dataset.append(str(x[i])+ " " + str(y[i]).replace('[','').replace(']',''))
-        
-        dataset = np.random.permutation(np.array(dataset))
-        print(dataset[1:5])        
-        chunks = np.array_split(dataset, NUM_BATCH)
-        
-        i=0
-        epoch = 1
-        tot_epoch = int(NUM_BATCH/NUM_THREADS)
-        while (i < len(chunks)):
-            #print("Run Epoch " + str(epoch) + "/" + str(len(chunks)/NUM_THREADS), end='') 
-            threads = []
-            for j in range(NUM_THREADS):
-                t = ImportThread(i, chunks[i].tolist(), status)
-                threads.append(t)
-                progress[i] = 0.0
-                t.daemon = True
-                t.start()
-                i=i+1
-
-            while any(i.is_alive() for i in threads):
-                time.sleep(1)
-                while not status.empty():
-                    id, percent = status.get()
-                    progress[id] = percent/tot_epoch
-                    millis2 = int(round(time.time() * 1000))
-                    print_progress(progress, epoch, tot_epoch, (millis2-millis)/1000)
-            for t in threads:
-                t.save()
-
-            for t in threads:
-                t.join()
-            
-            epoch = epoch + 1
-
-        print("")               
-
-        millis2 = int(round(time.time() * 1000))                
-        print("> Generation done in %s seconds" % str((millis2-millis)/1000))
+    #linelist = linelist[1:500]
+    listlen = len(linelist)
     
-    # Prepare data
-    x_batch_list = sorted(glob.glob(DATA_X_FILENAME+'*'))
-    y_batch_list = sorted(glob.glob(DATA_Y_FILENAME+'*'))
+    DATASET_SIZE = listlen
 
-    if ((len(x_batch_list) != NUM_BATCH) and (len(y_batch_list) != NUM_BATCH)):
-        print("> Some data elements are missing. exiting...")
-        exit()
+    print("  Dataset has " + str(listlen)+ " samples")
+            
+    # Normalize angle values
+    x = []
+    y = []
+    for line in linelist:
+        x.append(line.split()[0]) # get image name
+        y.append(line.split()[1]) # get angle
+    
+    y, y_std_dev, y_mean, y_scaling = Normalize(y)
 
+    # dataset is a list of strings in the format:
+    # <image_name>.<format> <normalized steering angle[float]>
+    dataset = []        
+    for i in range(len(x)):
+        dataset.append(str(x[i])+ " " + str(y[i]).replace('[','').replace(']',''))
+    
+    # shuffle the data randomly
+    dataset = np.random.permutation(np.array(dataset))
+    
+    print(dataset[1:5])        
+
+    # split the dataset in chunks
+    chunks = np.array_split(dataset, NUM_BATCH)
+    
+    # Split work across multiple threads
+    i=0
+    epoch = 1
+    tot_epoch = int(NUM_BATCH/NUM_THREADS)
+    
+    status = Queue()
+    progress = collections.OrderedDict()
+    while (i < len(chunks)):
+        threads = []
+        for j in range(NUM_THREADS):
+            t = ImportThread(i, chunks[i].tolist(), status)
+            threads.append(t)
+            progress[i] = 0.0
+            t.daemon = True
+            t.start()
+            i=i+1
+
+        while any(i.is_alive() for i in threads):
+            time.sleep(1)
+            while not status.empty():
+                id, percent = status.get()
+                progress[id] = percent/tot_epoch
+                millis2 = int(round(time.time() * 1000))
+                print_progress(progress, epoch, tot_epoch, (millis2-millis)/1000)
+        for t in threads:
+            t.save()
+
+        for t in threads:
+            t.join()
+        
+        epoch = epoch + 1
+
+    print("")               
+
+    millis2 = int(round(time.time() * 1000))                
+    print("> Generation done in %s seconds" % str((millis2-millis)/1000))
+
+def NNCreateModel(x_batch_list, y_batch_list):
+    # Split dataset in train/val/test sets
     x_train, x_test, y_train, y_test = train_test_split(x_batch_list, y_batch_list, test_size = .1)
     x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size = .1)
 
+    # Instatiate batch generators for the model
     bg_train = BatchGenerator(x_train, y_train)
-    bg_val = BatchGenerator(x_val, y_val)    
-    bg_test = BatchGenerator(x_test, y_test)
+    bg_val   = BatchGenerator(x_val, y_val)    
+    bg_test  = BatchGenerator(x_test, y_test)
 
-    if (os.path.isfile(MODEL_FILENAME)):
-        print("> Loading existing NN model...")
-        model = load_model(MODEL_FILENAME)
-        y_test_vec = np.load(y_test[0])
-        x_test_vec = np.load(x_test[0])
+    # build NN
+    input_units = CAMERA_WIDTH*CAMERA_HEIGHT
+    output_units = ANGLE_STEPS # angle ranges from -1 to 1 in steps of 0.1
 
-        predictions = model.predict(x_test_vec)
+    print("> Build Network")
+    # Model Architecture
+    model = Sequential()
+    model.add(Dense(units=int(input_units/100), activation='relu', input_dim=input_units))
+    model.add(Dense(units=int(512), activation='relu'))
+    model.add(Dense(units=int(256), activation='relu'))
+    #model.add(Dropout(0.3))
+    model.add(Dense(units=int(128), activation='relu'))
+    #model.add(Dropout(0.2))
+    #model.add(Dense(units=output_units, activation='softmax'))
+    model.add(Dense(units=1, activation='linear'))
+    
+    print("> Compile and fit the Network")
+    
+    # Model configuration
+    loss = keras.losses.mean_squared_error
+    epochs = 20
+    
+    optimizer = optimizers.SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True)
+    model.compile(loss=loss, optimizer=optimizer, metrics=['accuracy'])
 
-        print ("predictions sample")
-        print(predictions[1:10])
+    hist = History()
+    hist = model.fit_generator( bg_train, steps_per_epoch=NUM_BATCH,
+        validation_data=bg_val,
+        validation_steps=NUM_BATCH,
+        epochs=epochs)        
+    
+    # Save the model
+    modelName = "Model_" + "mse" + "_" + "sgd" + "_epochs" + epochs + "bs" + int(DATASET_SIZE/NUM_BATCH)
+    plot_model(model, to_file=modelName+'.png', show_shapes=True)
+    model.save(modelName + ".h5")
+                
+    # Plot training & validation accuracy values
+    plt.plot(hist.history['acc'])
+    plt.plot(hist.history['val_acc'])
+    plt.title('Model accuracy')
+    plt.ylabel('Accuracy')
+    plt.xlabel('Epoch')
+    plt.legend(['Train', 'Val'], loc='upper left')
+    plt.savefig(modelName+'_accuracy.png')
 
-        print ("y sample")
-        y = np.zeros((y_test_vec.shape[0], ANGLE_STEPS))
-        for i,angle in enumerate(y_test_vec):
-            idx = (ANGLE_STEPS-1)/2*(angle)+(ANGLE_STEPS-1)/2
-            y[i,math.ceil(idx)] = 1
-        print(y[1:10])
+    # Plot training & validation loss values
+    plt.figure()
+    plt.plot(hist.history['loss'])
+    plt.plot(hist.history['val_loss'])
+    plt.title('Model loss')
+    plt.ylabel('Loss')
+    plt.xlabel('Epoch')
+    plt.legend(['Train', 'Val'], loc='upper left')
+    plt.savefig(modelName+'_loss.png')
+    plt.show()
 
+    return model
 
-    else:
-        print("Generating new NN model...")
-        # build simple NN
-        input_units = CAMERA_WIDTH*CAMERA_HEIGHT
-        output_units = ANGLE_STEPS # angle ranges from -1 to 1 in steps of 0.1
+def main():    
+    modelname = glob.glob('model*.h5')
+    if (len(modelname) != 0):
+        print("> Loading existing NN model...")        
+        model = load_model(modelname[0])        
+    else:        
+        print("> Generating new NN model...")
+    
+        x_batch_list = sorted(glob.glob(DATA_X_FILENAME+'*'))
+        y_batch_list = sorted(glob.glob(DATA_Y_FILENAME+'*'))
 
-
-        print("> Build Network")
-        model = Sequential()
-        model.add(Dense(units=int(input_units/100), activation='relu', input_dim=input_units))
-        model.add(Dense(units=int(input_units/100), activation='relu'))
-        model.add(Dense(units=int(512), activation='relu'))
-        model.add(Dense(units=int(125), activation='relu'))
-        model.add(Dense(units=output_units, activation='softmax'))
-model.add(Dense(units=1, activation='linear'))
-        print("> Compile and fit the Network")
-        hist = History()
-        model.compile(loss=keras.losses.mean_squared_error, optimizer='SGD', metrics=['accuracy'])
-        plot_model(model, to_file='model.png', show_shapes=True)
-
-        hist = model.fit_generator( bg_train, steps_per_epoch=NUM_BATCH,
-            validation_data=bg_val,
-            validation_steps=NUM_BATCH,
-            epochs=20)        
-        """
-        x = np.load(x_train[0])
-        y_test_vec = np.load(y_train[0])
-
-        y = np.zeros((y_test_vec.shape[0], ANGLE_STEPS))
-        for i,angle in enumerate(y_test_vec):
-            idx = (ANGLE_STEPS-1)/2*(angle)+(ANGLE_STEPS-1)/2
-            y[i,math.ceil(idx)] = 1
-
-        model.fit(x,y, batch_size= 1, epochs =10)
-        """
-
-        model.save(MODEL_FILENAME)
+        if os.path.isdir(OUTPUT_DIR) and ((len(x_batch_list) == NUM_BATCH) and (len(y_batch_list) == NUM_BATCH)):
+            print("> Found already existing batch files")
+        else:
+            print("> Some batch data elements are missing or number of batch has changed")        
+            BatchDataGeneration(DATASET_FILENAME)
         
-        loss_and_metrics = model.evaluate_generator(bg_test, steps=NUM_BATCH)
-    
-
-
-
-        # Plot training & validation accuracy values
-        plt.plot(hist.history['acc'])
-        plt.plot(hist.history['val_acc'])
-        plt.title('Model accuracy')
-        plt.ylabel('Accuracy')
-        plt.xlabel('Epoch')
-        plt.legend(['Train', 'Test'], loc='upper left')
-        plt.savefig('Model_accuracy.png')
-
-        # Plot training & validation loss values
-        plt.figure()
-        plt.plot(hist.history['loss'])
-        plt.plot(hist.history['val_loss'])
-        plt.title('Model loss')
-        plt.ylabel('Loss')
-        plt.xlabel('Epoch')
-        plt.legend(['Train', 'Test'], loc='upper left')
-        plt.savefig('Model_loss.png')
-        plt.show()
-
-        print("Fit metrics")
-        print(hist.history.keys())
-        print(hist.history.values())
-        print("Evaluate metrics")
-        print(loss_and_metrics)
-    
-
+        model = NNCreateModel(x_batch_list, y_batch_list) 
+ 
 if __name__ == "__main__":
     main()
