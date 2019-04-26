@@ -333,7 +333,7 @@ def ComputeAccuracy(model, x, y, testset):
 
     j=0
     err = 0
-    
+    thr = 1
     for i in range(len(x)):
         imgs, labels = next(bg_test)
         predictions = model.predict(imgs)
@@ -341,7 +341,8 @@ def ComputeAccuracy(model, x, y, testset):
         p_idx = np.argmax(predictions, axis=1)
         y_idx = np.argmax(labels, axis=1)
 
-        diff = (p_idx != y_idx)*1
+        diff = abs(p_idx-y_idx)
+        diff = (diff>thr)*1
         err=err+np.sum(diff)
         j=j+len(predictions)
 
@@ -353,7 +354,6 @@ def ComputeAccuracy(model, x, y, testset):
     
 
 def main():    
-    #modelname = glob.glob('model*.h5')
     modelname=""
     if len(sys.argv) > 1:
         modelname = sys.argv[1]
@@ -389,6 +389,7 @@ def main():
         prev_hist = json.load(open(modelname+'.hist', 'r'))
         prev_hist.update(hist)
     """
+    
     # Calculate custom accuracy over the sets
     ComputeAccuracy(model, x_train, y_train, 'Train')
     ComputeAccuracy(model, x_val, y_val, 'Val')
