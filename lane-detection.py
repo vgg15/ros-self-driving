@@ -10,6 +10,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import MaxAbsScaler 
 from sklearn.model_selection  import train_test_split
 from sklearn.preprocessing import minmax_scale
+from sklearn.metrics import accuracy_score
 from keras.utils import plot_model
 from keras.models import load_model
 from keras import optimizers
@@ -114,18 +115,20 @@ class ImportThread (Thread):
 def BatchGenerator(batch_x, batch_y, setname):
     loopiter=0
     batch_len = len(batch_x)
-    print("generator " + setname + " started with " + str(batch_x) +  str(batch_y))
+    print("generator " + setname + " started with " + str(batch_x))
     while True:
         #print("generator " + setname + ": "+str(batch_x[loopiter]) + " " + str(batch_y[loopiter]))
         img = np.load(batch_x[loopiter])
         img = img/255.0
         labels = np.load(batch_y[loopiter])
+        
         y = np.zeros((labels.shape[0], ANGLE_STEPS))
         for i,angle in enumerate(labels):
             idx = (ANGLE_STEPS-1)/2*(angle)+(ANGLE_STEPS-1)/2
             y[i,math.ceil(idx)] = 1
         
         labels = y
+        
         loopiter = loopiter + 1
         if loopiter >= batch_len:
             loopiter=0
@@ -266,42 +269,18 @@ def NNCreateModel():
     #model.add(Dense(units=1, activation='linear'))
         
     # Model configuration
-    loss = 'mse'
-    #optimizer='adam'
-    optimizer = optimizers.SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True)
-    model.compile(loss=loss, optimizer=optimizer, metrics=['accuracy'])
+    loss = 'categorical_crossentropy'
+    optimizer='adam'
+    #optimizer = optimizers.SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True)
+    model.compile(loss=loss, optimizer=optimizer, metrics=keras.metrics.sparse_categorical_accuracy)
 
     return model
 
-class My_Callback(keras.callbacks.Callback):
-    def on_train_begin(self, logs={}):
-        return
- 
-    def on_train_end(self, logs={}):
-        return
- 
-    def on_epoch_begin(self, logs={}):
-        return
- 
-    def on_epoch_end(self, epoch, logs={}):
-        return
- 
-    def on_batch_begin(self, batch, logs={}):
-        return
- 
-    def on_batch_end(self, batch, logs={}):
-        self.losses.append(logs.get('loss'))
-        return
-
-def NNFitModel(model, modelname, x_batch_list, y_batch_list):
-    # Split dataset in train/val/test sets
-    x_train, x_test, y_train, y_test = train_test_split(x_batch_list, y_batch_list, test_size = .1)
-    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size = .1)
+def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
 
     # Instatiate batch generators for the model
     bg_train = BatchGenerator(x_train, y_train, 'train')
-    bg_val   = BatchGenerator(x_val, y_val, 'val')    
-    bg_test  = BatchGenerator(x_test, y_test, 'test')
+    bg_val   = BatchGenerator(x_val, y_val, 'val')
 
     epochs = 200
     checkpoint = ModelCheckpoint(modelname, monitor='loss', verbose=1, save_best_only=True, mode='auto')
@@ -347,6 +326,32 @@ def NNSaveModel(model, modelname, hist):
     plt.savefig(modelname+'_loss.png')
     plt.show()
 
+def ComputeAccuracy(model, x, y, testset):
+    print("")
+    print("***** Evaluating " + testset + " Accuracy *****")
+    bg_test  = BatchGenerator(x, y, testset)
+
+    j=0
+    err = 0
+    
+    for i in range(len(x)):
+        imgs, labels = next(bg_test)
+        predictions = model.predict(imgs)
+        
+        p_idx = np.argmax(predictions, axis=1)
+        y_idx = np.argmax(labels, axis=1)
+
+        diff = (p_idx != y_idx)*1
+        err=err+np.sum(diff)
+        j=j+len(predictions)
+
+    print(testset + " Acc : %.4f" % (1-float(err)/j))
+    print("")
+    print("pred " + str(p_idx))
+    print("")
+    print("labels " + str(y_idx))
+    
+
 def main():    
     #modelname = glob.glob('model*.h5')
     modelname=""
@@ -355,6 +360,10 @@ def main():
     
     x_batch_list = sorted(glob.glob(DATA_X_FILENAME+'*'))
     y_batch_list = sorted(glob.glob(DATA_Y_FILENAME+'*'))
+
+    # Split dataset in train/val/test sets
+    x_train, x_test, y_train, y_test = train_test_split(x_batch_list, y_batch_list, test_size = .1, shuffle=False)
+    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size = .1, shuffle=False)
 
     if (os.path.isfile(modelname)):
         print("> Loading existing NN model " + modelname)        
@@ -372,7 +381,7 @@ def main():
     
     if sys.argv[2] == "1":
         print("> Fitting model "+ modelname)
-        model, hist = NNFitModel(model, modelname, x_batch_list, y_batch_list)
+        model, hist = NNFitModel(model, modelname, x_train, y_train, x_val, y_val)
         NNSaveModel(model, modelname, hist)
     
     """if (os.path.isfile(modelname+'.hist')):
@@ -380,18 +389,11 @@ def main():
         prev_hist = json.load(open(modelname+'.hist', 'r'))
         prev_hist.update(hist)
     """
+    # Calculate custom accuracy over the sets
+    ComputeAccuracy(model, x_train, y_train, 'Train')
+    ComputeAccuracy(model, x_val, y_val, 'Val')
+    ComputeAccuracy(model, x_test, y_test, 'Test')
     
-
-    x = np.load(x_batch_list[0])
-    y = np.load(y_batch_list[0])
-    
-    predictions = model.predict(x)
-    print (predictions[1:5])
-    for i in range(5):
-        idx = np.argmax(predictions[i])
-        y_pred = (idx-((ANGLE_STEPS-1)/2))/((ANGLE_STEPS-1)/2)
-        print("pred: %.2f" % y_pred)
-        print("y: %.2f" % y[i])
             
 if __name__ == "__main__":
     main()
