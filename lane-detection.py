@@ -45,9 +45,11 @@ DATASET_FOLDER = 'bag_output/'
 DATASET_FILENAME = DATASET_FOLDER  + 'data.txt'
 
 ANGLE_RESOLUTION = 0.1
-NUM_OUTPUT_CLASSES = int(2/ANGLE_RESOLUTION)+1
 
 # Global variable
+LABELS_MIN = 0
+LABELS_MAX = 0
+NUM_OUTPUT_CLASSES = 0
 
 def print_progress(progress, curr_epoch, tot_epoch, eta):
     totpercent = 0.0
@@ -118,10 +120,14 @@ class PreProcessingThread (Thread):
 
 """
 def encodeLabels(labels, num_classes):
+    global LABELS_MIN
+    global LABELS_MAX
+
     y = np.zeros((labels.shape[0], num_classes))
     for i,angle in enumerate(labels):
-        idx = int(np.interp(angle, [-1,1], [0, num_classes]))
-        y[i,math.ceil(idx)] = 1
+        #idx = int(np.interp(angle, [-1,1], [0, num_classes]))
+        idx = np.interp(angle, [LABELS_MIN, LABELS_MAX], [0, num_classes-1])
+        y[i,round(idx)] = 1
     
     return y
 
@@ -129,8 +135,12 @@ def encodeLabels(labels, num_classes):
 @brief: Decode labels from one-hot vector to float number
 """
 def decodeLabels(labels, num_classes):
+    global LABELS_MIN
+    global LABELS_MAX
+
     idx = np.argmax(labels, axis=1)
-    y = np.interp(idx, [0, num_classes],  [-1,1], )
+    #y = np.interp(idx, [0, num_classes-1], [-1, 1])
+    y = np.interp(idx, [0, num_classes-1], [LABELS_MIN, LABELS_MAX])
     return y
 
 """
@@ -142,6 +152,8 @@ def decodeLabels(labels, num_classes):
     
 """
 def DataGenerator(batch_x, batch_y, dataset_name):
+    global NUM_OUTPUT_CLASSES
+
     loopiter=0
     batch_len = len(batch_x)
     print("generator " + dataset_name + " started with " + str(batch_x))
@@ -181,21 +193,38 @@ def Normalize(data):
     return (y_norm, y_std_dev, y_mean, y_scaling)
 
 def visualizeLabels(labels):
-    #plt.hist(labels, bins = NUM_OUTPUT_CLASSES,  range = (-1, 1), align='left')
-    #plt.xticks(np.arange(-1,1+ANGLE_RESOLUTION,ANGLE_RESOLUTION))
-    #plt.title(" angle")
-    #plt.figure()
+    global NUM_OUTPUT_CLASSES
+    global LABELS_MIN
+    global LABELS_MAX
+    
+    #plt.hist(labels, bins = NUM_OUTPUT_CLASSES,  range = (-1, 1), align='left', histtype='step')
+    plt.hist(labels, bins = NUM_OUTPUT_CLASSES)
+    #plt.xticks(np.arange(LABELS_MIN, LABELS_MAX+ANGLE_RESOLUTION,0.2))
+    plt.title("Steering wheel angle")
+    plt.figure()
 
-    labels = encodeLabels(labels, NUM_OUTPUT_CLASSES)
-    idx = np.argmax(labels, axis=1)
+    labels_e = encodeLabels(labels, NUM_OUTPUT_CLASSES)
+    idx = np.argmax(labels_e, axis=1)
     
     plt.hist(idx, bins=NUM_OUTPUT_CLASSES, range = (0, NUM_OUTPUT_CLASSES), align='left')
     plt.xticks(np.arange(NUM_OUTPUT_CLASSES))
     plt.title("Steering wheel labels")
 
+    labels_D = decodeLabels(labels_e, NUM_OUTPUT_CLASSES)
+
+    """
+    plt.figure()
+    plt.hist(labels_D, bins = NUM_OUTPUT_CLASSES)
+    plt.title("Steering wheel angle decoded")
+    """
+    #print(np.mean((labels-labels_D)))
     plt.show()
 
 def importDataset(dataset_name):
+    global LABELS_MIN
+    global LABELS_MAX
+    global NUM_OUTPUT_CLASSES
+
     # Open data file. The file is in the format:
     #   <image_name>.<format> <steering angle[float]>
     print("> Opening dataset file: " + dataset_name)
@@ -213,8 +242,16 @@ def importDataset(dataset_name):
     for line in dataset:
         X.append(line.split()[0])
         Y.append(float(line.split()[1]))
+    Y = np.array(Y)
+
+    LABELS_MIN = Y.min()
+    LABELS_MAX = Y.max()    
+
+    NUM_OUTPUT_CLASSES = int(abs(LABELS_MAX-LABELS_MIN)/ANGLE_RESOLUTION)
+    if (NUM_OUTPUT_CLASSES % 2) == 0:
+        NUM_OUTPUT_CLASSES = NUM_OUTPUT_CLASSES + 1
     
-    visualizeLabels(np.array(Y))
+    visualizeLabels(Y)
 
     
 
@@ -291,6 +328,8 @@ def BatchDataGeneration(dataset):
     print("> Generation done in %s seconds" % str((millis2-millis)/1000))
 
 def NNCreateModel(modelname):
+    global NUM_OUTPUT_CLASSES
+
     # build NN
     input_units = CAMERA_WIDTH*CAMERA_HEIGHT
     output_units = NUM_OUTPUT_CLASSES # angle ranges from -1 to 1 in steps of 0.1
