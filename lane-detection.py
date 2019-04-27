@@ -1,33 +1,34 @@
 #!/home/alessandro/venv/bin/python3
-import cv2
-import numpy as np
 import math
 import time
 import sys
 import json
-
-from sklearn.preprocessing import StandardScaler
-from sklearn.preprocessing import MaxAbsScaler 
-from sklearn.model_selection  import train_test_split
-from sklearn.preprocessing import minmax_scale
-from sklearn.metrics import accuracy_score
-from keras.utils import plot_model
-from keras.models import load_model
-from keras import optimizers
-import matplotlib.pyplot as plt
-from keras.callbacks import *
-
-import keras
-from keras.layers import Dense, Dropout
-from keras.models import Sequential
-from keras.callbacks import History
 import os
 from os import system, name 
 from threading import Thread
 from multiprocessing import Queue
 import collections
 import glob
-import glob
+
+import cv2
+import numpy as np
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MaxAbsScaler 
+from sklearn.model_selection  import train_test_split
+from sklearn.preprocessing import minmax_scale
+from sklearn.metrics import accuracy_score
+
+import matplotlib.pyplot as plt
+
+import keras
+from keras import regularizers
+from keras import optimizers
+from keras.layers import Dense, Dropout
+from keras.models import Sequential
+from keras.callbacks import *
+from keras.utils import plot_model
+from keras.models import load_model
 
 OUTPUT_DIR = 'output/'
 DATA_X_FILENAME = OUTPUT_DIR + 'data_x'
@@ -44,10 +45,9 @@ DATASET_FOLDER = 'bag_output/'
 DATASET_FILENAME = DATASET_FOLDER  + 'data.txt'
 
 ANGLE_RESOLUTION = 0.1
-ANGLE_STEPS = int(2/ANGLE_RESOLUTION)+1
+NUM_OUTPUT_CLASSES = int(2/ANGLE_RESOLUTION)+1
 
 # Global variable
-DATASET_SIZE = 0
 
 def print_progress(progress, curr_epoch, tot_epoch, eta):
     totpercent = 0.0
@@ -59,7 +59,7 @@ def print_progress(progress, curr_epoch, tot_epoch, eta):
     sys.stdout.write("\rEpoch %s/%s, Total progress [%s] %s%%, elapsed: %s" % (curr_epoch, tot_epoch, bar, totpercent, eta))    
     sys.stdout.flush()
 
-class ImportThread (Thread):
+class PreProcessingThread (Thread):
     def __init__(self, id, linelist, status):
         Thread.__init__(self)
         self.linelist = linelist
@@ -112,22 +112,46 @@ class ImportThread (Thread):
         np.save(DATA_X_FILENAME+"_"+str(self.id), np.around(np.array(self.xlist), decimals=4))
         np.save(DATA_Y_FILENAME+"_"+str(self.id), np.around(np.array(self.ylist), decimals=4))
 
-def BatchGenerator(batch_x, batch_y, setname):
+
+"""
+@brief: Encode labels from float number to one-hot vector
+
+"""
+def encodeLabels(labels, num_classes):
+    y = np.zeros((labels.shape[0], num_classes))
+    for i,angle in enumerate(labels):
+        idx = int(np.interp(angle, [-1,1], [0, num_classes]))
+        y[i,math.ceil(idx)] = 1
+    
+    return y
+
+"""
+@brief: Decode labels from one-hot vector to float number
+"""
+def decodeLabels(labels, num_classes):
+    idx = np.argmax(labels, axis=1)
+    y = np.interp(idx, [0, num_classes],  [-1,1], )
+    return y
+
+"""
+@brief: Import input data into the model in batch.
+@params:
+    - batch_x: list of input data X batch filenames
+    - batch_y: list of label data Y batch filenames
+    - dataset_name: dataset name 
+    
+"""
+def DataGenerator(batch_x, batch_y, dataset_name):
     loopiter=0
     batch_len = len(batch_x)
-    print("generator " + setname + " started with " + str(batch_x))
+    print("generator " + dataset_name + " started with " + str(batch_x))
     while True:
-        #print("generator " + setname + ": "+str(batch_x[loopiter]) + " " + str(batch_y[loopiter]))
+        #print("generator " + dataset_name + ": "+str(batch_x[loopiter]) + " " + str(batch_y[loopiter]))
         img = np.load(batch_x[loopiter])
         img = img/255.0
         labels = np.load(batch_y[loopiter])
-        
-        y = np.zeros((labels.shape[0], ANGLE_STEPS))
-        for i,angle in enumerate(labels):
-            idx = (ANGLE_STEPS-1)/2*(angle)+(ANGLE_STEPS-1)/2
-            y[i,math.ceil(idx)] = 1
-        
-        labels = y
+
+        labels = encodeLabels(labels, NUM_OUTPUT_CLASSES)
         
         loopiter = loopiter + 1
         if loopiter >= batch_len:
@@ -156,14 +180,50 @@ def Normalize(data):
 
     return (y_norm, y_std_dev, y_mean, y_scaling)
 
+def visualizeLabels(labels):
+    #plt.hist(labels, bins = NUM_OUTPUT_CLASSES,  range = (-1, 1), align='left')
+    #plt.xticks(np.arange(-1,1+ANGLE_RESOLUTION,ANGLE_RESOLUTION))
+    #plt.title(" angle")
+    #plt.figure()
+
+    labels = encodeLabels(labels, NUM_OUTPUT_CLASSES)
+    idx = np.argmax(labels, axis=1)
+    
+    plt.hist(idx, bins=NUM_OUTPUT_CLASSES, range = (0, NUM_OUTPUT_CLASSES), align='left')
+    plt.xticks(np.arange(NUM_OUTPUT_CLASSES))
+    plt.title("Steering wheel labels")
+
+    plt.show()
+
+def importDataset(dataset_name):
+    # Open data file. The file is in the format:
+    #   <image_name>.<format> <steering angle[float]>
+    print("> Opening dataset file: " + dataset_name)
+    with open(dataset_name) as f:
+        dataset = f.readlines()
+    
+    print("> Dataset has " + str(len(dataset))+ " samples")
+
+    # shuffle the data randomly
+    dataset = np.random.permutation(np.array(dataset))    
+    
+    # Convert a list of string to  numpy array
+    X = []
+    Y = []
+    for line in dataset:
+        X.append(line.split()[0])
+        Y.append(float(line.split()[1]))
+    
+    visualizeLabels(np.array(Y))
+
+    
+
 """
-Generate batch files with intemediate data preprocessing such as:
+Generate batch files:
     - normalization
 Returns: 
 """
-def BatchDataGeneration(dataFilename):
-    global DATASET_SIZE
-
+def BatchDataGeneration(dataset):
     # Get execution time
     millis = int(round(time.time() * 1000))
     
@@ -171,18 +231,6 @@ def BatchDataGeneration(dataFilename):
         os.mkdir(OUTPUT_DIR)
     except FileExistsError:
         pass
-
-    # Open data file. The file is in the format:
-    #   <image_name>.<format> <steering angle[float]>
-    with open(dataFilename) as f:
-        linelist = f.readlines()
-
-    #linelist = linelist[1:100]
-    listlen = len(linelist)
-    
-    DATASET_SIZE = listlen
-
-    print("  Dataset has " + str(listlen)+ " samples")
             
     # Normalize angle values
     """
@@ -201,11 +249,6 @@ def BatchDataGeneration(dataFilename):
         dataset.append(str(x[i])+ " " + str(y[i]).replace('[','').replace(']',''))
     
     """
-    dataset = linelist
-    # shuffle the data randomly
-    dataset = np.random.permutation(np.array(dataset))
-    
-    print(dataset[1:5])        
 
     # split the dataset in chunks
     chunks = np.array_split(dataset, NUM_BATCH)
@@ -220,7 +263,7 @@ def BatchDataGeneration(dataFilename):
     while (i < len(chunks)):
         threads = []
         for j in range(NUM_THREADS):
-            t = ImportThread(i, chunks[i].tolist(), status)
+            t = PreProcessingThread(i, chunks[i].tolist(), status)
             threads.append(t)
             progress[i] = 0.0
             t.daemon = True
@@ -247,18 +290,19 @@ def BatchDataGeneration(dataFilename):
     millis2 = int(round(time.time() * 1000))                
     print("> Generation done in %s seconds" % str((millis2-millis)/1000))
 
-def NNCreateModel():
-    global DATASET_SIZE
-
+def NNCreateModel(modelname):
     # build NN
     input_units = CAMERA_WIDTH*CAMERA_HEIGHT
-    output_units = ANGLE_STEPS # angle ranges from -1 to 1 in steps of 0.1
+    output_units = NUM_OUTPUT_CLASSES # angle ranges from -1 to 1 in steps of 0.1
 
     print("> Build Network")
 
     # Model Architecture
-    model = Sequential()
+    model = Sequential()    
+    kernel_regularizer=regularizers.l2(0.01)
+
     model.add(Dense(units=int(input_units/100), activation='relu', input_dim=input_units))
+    #model.add(Dropout(0.5))
     model.add(Dense(units=int(input_units/100), activation='relu'))
     model.add(Dropout(0.3))
     model.add(Dense(units=int(512), activation='relu'))
@@ -267,24 +311,28 @@ def NNCreateModel():
     model.add(Dropout(0.2))
     model.add(Dense(units=output_units, activation='softmax'))
     #model.add(Dense(units=1, activation='linear'))
-        
+    
+    #model.load_weights('model-1_cc_adam.h5_weights.h5')
+    
     # Model configuration
     loss = 'categorical_crossentropy'
-    optimizer='adam'
+    optimizer = 'adam' #optimizers.Adam(lr=0.001) # decay=1e-1
     #optimizer = optimizers.SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True)
-    model.compile(loss=loss, optimizer=optimizer, metrics=keras.metrics.sparse_categorical_accuracy)
+    model.compile(loss=loss, optimizer=optimizer, metrics=['acc'])
 
     return model
 
 def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
 
     # Instatiate batch generators for the model
-    bg_train = BatchGenerator(x_train, y_train, 'train')
-    bg_val   = BatchGenerator(x_val, y_val, 'val')
+    bg_train = DataGenerator(x_train, y_train, 'train')
+    bg_val   = DataGenerator(x_val, y_val, 'val')
 
-    epochs = 200
+    epochs = 20
     checkpoint = ModelCheckpoint(modelname, monitor='loss', verbose=1, save_best_only=True, mode='auto')
-    callbacks_list = [checkpoint]
+    #earlystop = EarlyStopping(monitor='loss', min_delta=0.01, patience=4, verbose=0, mode='auto', baseline=None, restore_best_weights=True)
+    tensorboard = keras.callbacks.TensorBoard(log_dir='./tensorboard_logs/' + modelname)
+    callbacks_list = [checkpoint, tensorboard]
 
     hist = History()
     train_steps = len(x_train)
@@ -298,11 +346,11 @@ def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
 
     return (model, hist.history)
 
-def NNSaveModel(model, modelname, hist):        
+def NNSaveModel(model, modelname, hist):
     # Save the model
-    #odelName = "Model_" + loss + "_" + optimizer + "_epochs" + str(epochs) + "_bs" + str(int(DATASET_SIZE/NUM_BATCH))
     plot_model(model, to_file=modelname+'.png', show_shapes=True)
     model.save(modelname)
+    model.save_weights(modelname+'_weights.h5')
 
     json.dump(hist, open(modelname+".hist", 'w'))
 
@@ -329,7 +377,7 @@ def NNSaveModel(model, modelname, hist):
 def ComputeAccuracy(model, x, y, testset):
     print("")
     print("***** Evaluating " + testset + " Accuracy *****")
-    bg_test  = BatchGenerator(x, y, testset)
+    bg_test  = DataGenerator(x, y, testset)
 
     j=0
     err = 0
@@ -352,22 +400,22 @@ def ComputeAccuracy(model, x, y, testset):
     print("")
     print("labels " + str(y_idx))
     
-
 def main():    
     modelname=""
     if len(sys.argv) > 1:
         modelname = sys.argv[1]
     
+    dataset = importDataset(DATASET_FILENAME)
+    
+    exit()
+
     x_batch_list = sorted(glob.glob(DATA_X_FILENAME+'*'))
     y_batch_list = sorted(glob.glob(DATA_Y_FILENAME+'*'))
 
-    # Split dataset in train/val/test sets
-    x_train, x_test, y_train, y_test = train_test_split(x_batch_list, y_batch_list, test_size = .1, shuffle=False)
-    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size = .1, shuffle=False)
-
     if (os.path.isfile(modelname)):
         print("> Loading existing NN model " + modelname)        
-        model = load_model(modelname)        
+        model = load_model(modelname)     
+        model.save_weights(modelname+'_weights.h5')           
     else:        
         print("> Generating new NN model...")
     
@@ -375,10 +423,14 @@ def main():
             print("> Found already existing batch files")
         else:
             print("> Some batch data elements are missing or number of batch has changed")        
-            BatchDataGeneration(DATASET_FILENAME)
+            BatchDataGeneration(dataset)
         
-        model = NNCreateModel() 
-    
+        model = NNCreateModel(modelname) 
+      
+    # Split dataset in train/val/test sets
+    x_train, x_test, y_train, y_test = train_test_split(x_batch_list, y_batch_list, test_size = .1, shuffle=False)
+    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size = .1, shuffle=False)
+
     if sys.argv[2] == "1":
         print("> Fitting model "+ modelname)
         model, hist = NNFitModel(model, modelname, x_train, y_train, x_val, y_val)
