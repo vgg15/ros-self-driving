@@ -9,6 +9,7 @@ from threading import Thread
 from multiprocessing import Queue
 import collections
 import glob
+import random
 
 import cv2
 import numpy as np
@@ -24,7 +25,7 @@ import matplotlib.pyplot as plt
 import keras
 from keras import regularizers
 from keras import optimizers
-from keras.layers import Dense, Dropout
+from keras.layers import *
 from keras.models import Sequential
 from keras.callbacks import *
 from keras.utils import plot_model
@@ -36,17 +37,17 @@ DATA_Y_FILENAME = OUTPUT_DIR + 'data_y'
 NUMPY_EXT = '.npy'
 
 CAMERA_WIDTH = 320
-CAMERA_HEIGHT = 320
+CAMERA_HEIGHT = 240
 
 NUM_THREADS = 4
-NUM_BATCH = 16
+NUM_BATCH = 128
 
-DATASET_FOLDER = 'bag_output/'
+DATASET_FOLDER = '/bag_output_rec3/'
 DATASET_FILENAME = DATASET_FOLDER  + 'data.txt'
 
 ANGLE_RESOLUTION = 0.1
 
-# Global variable
+# Global variable - DO NOT MANUALLY MODIFY!
 LABELS_MIN = 0
 LABELS_MAX = 0
 NUM_OUTPUT_CLASSES = 0
@@ -73,7 +74,6 @@ class PreProcessingThread (Thread):
     def run(self):        
         i=0
         listlen = len(self.linelist)          
-        #print("Thread " + str(self.id) + " started with " + str(listlen) + " elements")                        
 
         for line in self.linelist:            
             row = line.split()
@@ -87,13 +87,12 @@ class PreProcessingThread (Thread):
             frame = cv2.resize(frame,(CAMERA_WIDTH,CAMERA_HEIGHT))
 
             # apply threshold
-            ret, frame = cv2.threshold(frame, 50,255, cv2.THRESH_BINARY)
+            ret, frame = cv2.threshold(frame, 70, 255, cv2.THRESH_BINARY)
             
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-            pts1 = np.float32([[90,110],[CAMERA_WIDTH-90,110],[0,CAMERA_HEIGHT-60],[CAMERA_WIDTH,CAMERA_HEIGHT-60]])
+            pts1 = np.float32([[125,30],[CAMERA_WIDTH-128,30],[0,CAMERA_HEIGHT-60],[CAMERA_WIDTH,CAMERA_HEIGHT-60]])
             pts2 = np.float32([[0,0],[CAMERA_WIDTH,0],[0,CAMERA_HEIGHT],[CAMERA_WIDTH,CAMERA_HEIGHT]])
-    
     
             M = cv2.getPerspectiveTransform(pts1,pts2)
             frame = cv2.warpPerspective(frame,M,(CAMERA_WIDTH,CAMERA_HEIGHT))
@@ -127,7 +126,7 @@ def encodeLabels(labels, num_classes):
     for i,angle in enumerate(labels):
         #idx = int(np.interp(angle, [-1,1], [0, num_classes]))
         idx = np.interp(angle, [LABELS_MIN, LABELS_MAX], [0, num_classes-1])
-        y[i,round(idx)] = 1
+        y[i,int(round(idx))] = 1
     
     return y
 
@@ -161,6 +160,7 @@ def DataGenerator(batch_x, batch_y, dataset_name):
         #print("generator " + dataset_name + ": "+str(batch_x[loopiter]) + " " + str(batch_y[loopiter]))
         img = np.load(batch_x[loopiter])
         img = img/255.0
+        #img = img.reshape(img.shape[0], CAMERA_WIDTH, CAMERA_HEIGHT, 1)
         labels = np.load(batch_y[loopiter])
 
         labels = encodeLabels(labels, NUM_OUTPUT_CLASSES)
@@ -286,6 +286,7 @@ def importDataset(dataset_name):
         X.append(line.split()[0])
         Y.append(float(line.split()[1]))
     
+    print(dataset[0:5])
     X = np.array(X)
     Y = np.array(Y)
 
@@ -382,29 +383,38 @@ def NNCreateModel(modelname):
 
     print("> Build Network")
 
+    # Model Parameters
+    #alpha = -4*random.rand()
+    #lr = 10**alpha
+    lr = 0.00
+    loss = 'categorical_crossentropy'
+    optimizer = optimizers.Adam(lr=lr , decay=1e-4) # decay=1e-4
+
     # Model Architecture
     model = Sequential()    
     kernel_regularizer=regularizers.l2(0.01)
 
-    model.add(Dense(units=int(input_units/100), activation='relu', input_dim=input_units))
-    #model.add(Dropout(0.5))
-    model.add(Dense(units=int(input_units/100), activation='relu'))
-    model.add(Dropout(0.3))
-    model.add(Dense(units=int(512), activation='relu'))
-    model.add(Dropout(0.3))
-    model.add(Dense(units=int(512), activation='relu'))
-    model.add(Dropout(0.2))
+    model.add(Dense(units=int(500), activation='relu', input_dim=input_units))
+    #model.add(Conv2D(64, kernel_size=3, activation='relu', input_shape=(CAMERA_WIDTH,CAMERA_HEIGHT,1)))
+    #model.add(Conv2D(32, kernel_size=3, activation=’relu’))
+    #model.add(Flatten())
+    #model.add(Dropout(0.1))
+    model.add(Dense(units=int(250), activation='relu'))
+    #model.add(Dropout(0.1))
+    model.add(Dense(units=int(50), activation='relu'))
+    #model.add(Dropout(0.1))
+    #model.add(Dense(units=int(50), activation='relu'))
+    #model.add(Dropout(0.1))
     model.add(Dense(units=output_units, activation='softmax'))
     #model.add(Dense(units=1, activation='linear'))
     
     #model.load_weights('model-1_cc_adam.h5_weights.h5')
     
-    # Model configuration
-    loss = 'categorical_crossentropy'
-    optimizer = 'adam' #optimizers.Adam(lr=0.001) # decay=1e-1
+    # Model configuration    
     #optimizer = optimizers.SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True)
     model.compile(loss=loss, optimizer=optimizer, metrics=['acc'])
-
+    plot_model(model, to_file=modelname+'.png', show_shapes=True)
+    
     return model
 
 def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
@@ -413,17 +423,17 @@ def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
     bg_train = DataGenerator(x_train, y_train, 'train')
     bg_val   = DataGenerator(x_val, y_val, 'val')
 
-    epochs = 20
+    epochs = 50
     checkpoint = ModelCheckpoint(modelname, monitor='loss', verbose=1, save_best_only=True, mode='auto')
     #earlystop = EarlyStopping(monitor='loss', min_delta=0.01, patience=4, verbose=0, mode='auto', baseline=None, restore_best_weights=True)
-    tensorboard = keras.callbacks.TensorBoard(log_dir='./tensorboard_logs/' + modelname)
+    tensorboard = keras.callbacks.TensorBoard(log_dir='./logs/' + modelname)
     callbacks_list = [checkpoint, tensorboard]
 
     hist = History()
     train_steps = len(x_train)
     val_steps = len(x_val)
 
-    hist = model.fit_generator( bg_train, steps_per_epoch=train_steps,
+    hist = model.fit_generator(bg_train, steps_per_epoch=train_steps,
         validation_data=bg_val,
         validation_steps=val_steps,
         epochs=epochs,
@@ -432,8 +442,7 @@ def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
     return (model, hist.history)
 
 def NNSaveModel(model, modelname, hist):
-    # Save the model
-    plot_model(model, to_file=modelname+'.png', show_shapes=True)
+    # Save the model    
     model.save(modelname)
     model.save_weights(modelname+'_weights.h5')
 
