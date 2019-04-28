@@ -192,12 +192,24 @@ def Normalize(data):
 
     return (y_norm, y_std_dev, y_mean, y_scaling)
 
-def visualizeLabels(labels):
+def visualizeDataset(X, labels):
     global NUM_OUTPUT_CLASSES
     global LABELS_MIN
     global LABELS_MAX
     
-    ###
+    ### Input sample ###
+    
+    for i in range(25):
+        img = cv2.imread(DATASET_FOLDER+X[i], cv2.IMREAD_GRAYSCALE)
+        plt.subplot(5,5,i+1) 
+        plt.imshow(img)
+        plt.axis('off')
+        #plt.tight_layout()
+        plt.title("Angle: %.2f" % float(labels[i]))
+
+    plt.figure()
+
+    ### Labels ###
     plt.subplot(321)
     plt.hist(labels, bins = 50)
     plt.title("Steering wheel angles")
@@ -250,7 +262,6 @@ def visualizeLabels(labels):
     """
     plt.tight_layout()
     plt.show()
-    exit()
 
 def importDataset(dataset_name):
     global LABELS_MIN
@@ -274,6 +285,8 @@ def importDataset(dataset_name):
     for line in dataset:
         X.append(line.split()[0])
         Y.append(float(line.split()[1]))
+    
+    X = np.array(X)
     Y = np.array(Y)
 
     LABELS_MIN = Y.min()
@@ -284,7 +297,7 @@ def importDataset(dataset_name):
         NUM_OUTPUT_CLASSES = NUM_OUTPUT_CLASSES + 1
     
     print("> Creating " + str(NUM_OUTPUT_CLASSES) + " classes with resolution " + str(ANGLE_RESOLUTION))
-    visualizeLabels(Y)
+    visualizeDataset(X,Y)
 
     return dataset
 
