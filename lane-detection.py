@@ -197,12 +197,13 @@ def visualizeLabels(labels):
     global LABELS_MIN
     global LABELS_MAX
     
-    #plt.hist(labels, bins = NUM_OUTPUT_CLASSES,  range = (-1, 1), align='left', histtype='step')
-    plt.hist(labels, bins = NUM_OUTPUT_CLASSES)
-    #plt.xticks(np.arange(LABELS_MIN, LABELS_MAX+ANGLE_RESOLUTION,0.2))
-    plt.title("Steering wheel angle")
-    plt.figure()
+    ###
+    plt.subplot(321)
+    plt.hist(labels, bins = 50)
+    plt.title("Steering wheel angles")
 
+    ###
+    plt.subplot(322)
     labels_e = encodeLabels(labels, NUM_OUTPUT_CLASSES)
     idx = np.argmax(labels_e, axis=1)
     
@@ -210,15 +211,46 @@ def visualizeLabels(labels):
     plt.xticks(np.arange(NUM_OUTPUT_CLASSES))
     plt.title("Steering wheel labels")
 
-    labels_D = decodeLabels(labels_e, NUM_OUTPUT_CLASSES)
+    ###
+    _, _, y_train, y_val = train_test_split(labels, labels, test_size = .1, shuffle=False)
+
+    plt.subplot(323)
+    plt.hist(y_train, bins = 50)
+    plt.title("Training set angles")
+
+    ###
+    plt.subplot(324)
+    y_train = encodeLabels(y_train, NUM_OUTPUT_CLASSES)
+    idx = np.argmax(y_train, axis=1)
+    
+    plt.hist(idx, bins=NUM_OUTPUT_CLASSES, range = (0, NUM_OUTPUT_CLASSES), align='left')
+    plt.xticks(np.arange(NUM_OUTPUT_CLASSES))
+    plt.title("Training set labels")
+    
+    ###
+    plt.subplot(325)
+    plt.hist(y_val, bins = 50)
+    plt.title("Validation set angles")
+
+    ###
+    plt.subplot(326)
+    y_val = encodeLabels(y_val, NUM_OUTPUT_CLASSES)
+    idx = np.argmax(y_val, axis=1)
+    
+    plt.hist(idx, bins=NUM_OUTPUT_CLASSES, range = (0, NUM_OUTPUT_CLASSES), align='left')
+    plt.xticks(np.arange(NUM_OUTPUT_CLASSES))
+    plt.title("Validation set labels")
 
     """
+    labels_D = decodeLabels(labels_e, NUM_OUTPUT_CLASSES)
     plt.figure()
     plt.hist(labels_D, bins = NUM_OUTPUT_CLASSES)
     plt.title("Steering wheel angle decoded")
+    print(np.mean((labels-labels_D)))
     """
-    #print(np.mean((labels-labels_D)))
+    plt.tight_layout()
     plt.show()
+    exit()
 
 def importDataset(dataset_name):
     global LABELS_MIN
@@ -234,7 +266,7 @@ def importDataset(dataset_name):
     print("> Dataset has " + str(len(dataset))+ " samples")
 
     # shuffle the data randomly
-    dataset = np.random.permutation(np.array(dataset))    
+    dataset = np.random.RandomState(seed=136945).permutation(np.array(dataset))    
     
     # Convert a list of string to  numpy array
     X = []
@@ -251,9 +283,10 @@ def importDataset(dataset_name):
     if (NUM_OUTPUT_CLASSES % 2) == 0:
         NUM_OUTPUT_CLASSES = NUM_OUTPUT_CLASSES + 1
     
+    print("> Creating " + str(NUM_OUTPUT_CLASSES) + " classes with resolution " + str(ANGLE_RESOLUTION))
     visualizeLabels(Y)
 
-    
+    return dataset
 
 """
 Generate batch files:
@@ -446,8 +479,6 @@ def main():
     
     dataset = importDataset(DATASET_FILENAME)
     
-    exit()
-
     x_batch_list = sorted(glob.glob(DATA_X_FILENAME+'*'))
     y_batch_list = sorted(glob.glob(DATA_Y_FILENAME+'*'))
 
