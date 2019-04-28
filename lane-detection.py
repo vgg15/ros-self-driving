@@ -24,13 +24,13 @@ import matplotlib.pyplot as plt
 
 import keras
 from keras import regularizers
-from keras import optimizers
 from keras.layers import *
 from keras.models import Sequential
 from keras.callbacks import *
 from keras.utils import plot_model
 from keras.models import load_model
 
+LOG_DIR = 'logs/'
 OUTPUT_DIR = 'output/'
 DATA_X_FILENAME = OUTPUT_DIR + 'data_x'
 DATA_Y_FILENAME = OUTPUT_DIR + 'data_y'
@@ -42,7 +42,7 @@ CAMERA_HEIGHT = 240
 NUM_THREADS = 4
 NUM_BATCH = 128
 
-DATASET_FOLDER = '/bag_output_rec3/'
+DATASET_FOLDER = 'bag_output_rec3/'
 DATASET_FILENAME = DATASET_FOLDER  + 'data.txt'
 
 ANGLE_RESOLUTION = 0.1
@@ -377,45 +377,49 @@ def BatchDataGeneration(dataset):
 def NNCreateModel(modelname):
     global NUM_OUTPUT_CLASSES
 
-    # build NN
-    input_units = CAMERA_WIDTH*CAMERA_HEIGHT
-    output_units = NUM_OUTPUT_CLASSES # angle ranges from -1 to 1 in steps of 0.1
-
     print("> Build Network")
-
-    # Model Parameters
-    #alpha = -4*random.rand()
-    #lr = 10**alpha
-    lr = 0.00
-    loss = 'categorical_crossentropy'
-    optimizer = optimizers.Adam(lr=lr , decay=1e-4) # decay=1e-4
-
-    # Model Architecture
-    model = Sequential()    
-    kernel_regularizer=regularizers.l2(0.01)
-
-    model.add(Dense(units=int(500), activation='relu', input_dim=input_units))
-    #model.add(Conv2D(64, kernel_size=3, activation='relu', input_shape=(CAMERA_WIDTH,CAMERA_HEIGHT,1)))
-    #model.add(Conv2D(32, kernel_size=3, activation=’relu’))
-    #model.add(Flatten())
-    #model.add(Dropout(0.1))
-    model.add(Dense(units=int(250), activation='relu'))
-    #model.add(Dropout(0.1))
-    model.add(Dense(units=int(50), activation='relu'))
-    #model.add(Dropout(0.1))
-    #model.add(Dense(units=int(50), activation='relu'))
-    #model.add(Dropout(0.1))
-    model.add(Dense(units=output_units, activation='softmax'))
-    #model.add(Dense(units=1, activation='linear'))
+   
+    input_units  = CAMERA_WIDTH*CAMERA_HEIGHT
+    output_units = NUM_OUTPUT_CLASSES
     
-    #model.load_weights('model-1_cc_adam.h5_weights.h5')
-    
-    # Model configuration    
-    #optimizer = optimizers.SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True)
-    model.compile(loss=loss, optimizer=optimizer, metrics=['acc'])
-    plot_model(model, to_file=modelname+'.png', show_shapes=True)
-    
-    return model
+    logName = modelname
+
+    for i in range(10):
+        ### Hyper-parameters tuning ###
+        lr           = 10**random.uniform(-4,-1)    
+        lr_decay     = 10**random.uniform(-4,-1)
+        dense_layers = random.randint(1, 5)
+        dense_units  = random.randint(32, 1024) 
+        l2_reg       = 10**random.uniform(-4, -1)
+        dropout      = random.uniform(0.1, 0.5)
+        momentum     = random.uniform(0.5, 0.9)
+
+        loss = 'categorical_crossentropy'
+        adam_optimizer = keras.optimizers.Adam(lr=lr , decay=lr_decay)
+        sgd_optimizer  = keras.optimizers.SGD(lr=lr, decay=lr_decay, momentum=momentum)
+        optimizers     = {'adam':adam_optimizer, 'sgd': sgd_optimizer}
+        optimizer_name = random.choice(['adam', 'sgd'])
+        optimizer = optimizers[optimizer_name]
+
+        #### Model Architecture ###
+        model = Sequential()    
+        kernel_regularizer=regularizers.l2(l2_reg)
+
+        model.add(Dense(units=dense_units, activation='relu', input_dim=input_units, kernel_regularizer=kernel_regularizer))
+
+        for i in range(dense_layers):
+            model.add(Dense(units=dense_units, activation='relu', kernel_regularizer=kernel_regularizer))
+
+        model.add(Dense(units=output_units, activation='softmax'))
+        
+        model.compile(loss=loss, optimizer=optimizer, metrics=['acc'])
+        #plot_model(model, to_file=LOG_DIR + modelname+'.png', show_shapes=True)
+        
+        logName = modelname + "-lr_{:.2}-dec_{:.2}-l_{}-u_{}-reg_{:.2}-drop_{:.2}-mom_{:.2}-opt_{}".format(lr,lr_decay,dense_layers,dense_units, l2_reg, dropout, momentum, optimizer_name)
+        print(logName)
+
+    exit()
+    return model, modelname
 
 def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
 
@@ -426,7 +430,7 @@ def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
     epochs = 50
     checkpoint = ModelCheckpoint(modelname, monitor='loss', verbose=1, save_best_only=True, mode='auto')
     #earlystop = EarlyStopping(monitor='loss', min_delta=0.01, patience=4, verbose=0, mode='auto', baseline=None, restore_best_weights=True)
-    tensorboard = keras.callbacks.TensorBoard(log_dir='./logs/' + modelname)
+    tensorboard = keras.callbacks.TensorBoard(log_dir=LOG_DIR + modelname)
     callbacks_list = [checkpoint, tensorboard]
 
     hist = History()
@@ -443,19 +447,20 @@ def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
 
 def NNSaveModel(model, modelname, hist):
     # Save the model    
-    model.save(modelname)
-    model.save_weights(modelname+'_weights.h5')
+    model.save(LOG_DIR+modelname)
+    #model.save_weights(modelname+'_weights.h5')
 
-    json.dump(hist, open(modelname+".hist", 'w'))
+    #json.dump(hist, open(modelname+".hist", 'w'))
 
     # Plot training & validation accuracy values
+    """
     plt.plot(hist['acc'])
     plt.plot(hist['val_acc'])
     plt.title('Model accuracy')
     plt.ylabel('Accuracy')
     plt.xlabel('Epoch')
     plt.legend(['Train', 'Val'], loc='upper left')
-    plt.savefig(modelname+'_accuracy.png')
+    plt.savefig(LOG_DIR+modelname+'_accuracy.png')
 
     # Plot training & validation loss values
     plt.figure()
@@ -465,8 +470,9 @@ def NNSaveModel(model, modelname, hist):
     plt.ylabel('Loss')
     plt.xlabel('Epoch')
     plt.legend(['Train', 'Val'], loc='upper left')
-    plt.savefig(modelname+'_loss.png')
+    plt.savefig(LOG_DIR+modelname+'_loss.png')
     plt.show()
+    """
 
 def ComputeAccuracy(model, x, y, testset):
     print("")
@@ -517,7 +523,7 @@ def main():
             print("> Some batch data elements are missing or number of batch has changed")        
             BatchDataGeneration(dataset)
         
-        model = NNCreateModel(modelname) 
+        model, modelname = NNCreateModel(modelname) 
       
     # Split dataset in train/val/test sets
     x_train, x_test, y_train, y_test = train_test_split(x_batch_list, y_batch_list, test_size = .1, shuffle=False)
