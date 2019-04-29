@@ -26,14 +26,14 @@ import matplotlib.pyplot as plt
 
 import keras
 from keras import regularizers
-from keras.layers import *
+from keras.layers import Dense, Dropout
 from keras.models import Sequential
 from keras.callbacks import *
 from keras.utils import plot_model
 from keras.models import load_model
 
 LOG_DIR = 'logs/'
-OUTPUT_DIR = 'output/'
+OUTPUT_DIR = 'output_64x64px_nopersp/'
 DATA_X_FILENAME = OUTPUT_DIR + 'data_x'
 DATA_Y_FILENAME = OUTPUT_DIR + 'data_y'
 NUMPY_EXT = '.npy'
@@ -47,7 +47,7 @@ NUM_BATCH = 128
 DATASET_FOLDER = 'bag_output_rec3/'
 DATASET_FILENAME = DATASET_FOLDER  + 'data.txt'
 
-ANGLE_RESOLUTION = 0.1
+ANGLE_RESOLUTION = 0.2
 
 # Global variable - DO NOT MANUALLY MODIFY!
 LABELS_MIN = 0
@@ -93,11 +93,11 @@ class PreProcessingThread (Thread):
             
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-            pts1 = np.float32([[125,30],[CAMERA_WIDTH-128,30],[0,CAMERA_HEIGHT-60],[CAMERA_WIDTH,CAMERA_HEIGHT-60]])
-            pts2 = np.float32([[0,0],[CAMERA_WIDTH,0],[0,CAMERA_HEIGHT],[CAMERA_WIDTH,CAMERA_HEIGHT]])
+            #pts1 = np.float32([[125,30],[CAMERA_WIDTH-128,30],[0,CAMERA_HEIGHT-60],[CAMERA_WIDTH,CAMERA_HEIGHT-60]])
+            #pts2 = np.float32([[0,0],[CAMERA_WIDTH,0],[0,CAMERA_HEIGHT],[CAMERA_WIDTH,CAMERA_HEIGHT]])
     
-            M = cv2.getPerspectiveTransform(pts1,pts2)
-            frame = cv2.warpPerspective(frame,M,(CAMERA_WIDTH,CAMERA_HEIGHT))
+            #M = cv2.getPerspectiveTransform(pts1,pts2)
+            #frame = cv2.warpPerspective(frame,M,(CAMERA_WIDTH,CAMERA_HEIGHT))
 
             # unroll
             frame = np.reshape(frame, (1,CAMERA_WIDTH*CAMERA_HEIGHT))
@@ -157,7 +157,7 @@ def DataGenerator(batch_x, batch_y, dataset_name):
 
     loopiter=0
     batch_len = len(batch_x)
-    print("generator " + dataset_name + " started with " + str(batch_x))
+    #print("generator " + dataset_name + " started with " + str(batch_x))
     while True:
         #print("generator " + dataset_name + ": "+str(batch_x[loopiter]) + " " + str(batch_y[loopiter]))
         img = np.load(batch_x[loopiter])
@@ -383,44 +383,46 @@ def NNCreateModel(modelname):
    
     input_units  = CAMERA_WIDTH*CAMERA_HEIGHT
     output_units = NUM_OUTPUT_CLASSES
-    
-    logName = modelname
+        
 
-    for i in range(10):
-        ### Hyper-parameters tuning ###
-        lr           = 10**random.uniform(-4,-1)    
-        lr_decay     = 10**random.uniform(-4,-1)
-        dense_layers = random.randint(1, 5)
-        dense_units  = random.randint(32, 1024) 
-        l2_reg       = 10**random.uniform(-4, -1)
-        dropout      = random.uniform(0.1, 0.5)
-        momentum     = random.uniform(0.5, 0.9)
+    ### Hyper-parameters tuning ###
+    lr           = 0.0012 #10**random.uniform(-4,-1)    
+    lr_decay     = 0.00028 #10**random.uniform(-4,-1)
+    dense_layers = 5 #random.randint(1, 5)
+    dense_units  = 833 #random.randint(32, 1024) 
+    l2_reg       = 10**random.uniform(-4, -2)
+    dropout      = random.uniform(0.1, 0.3)
+    momentum     = 0.66 #random.uniform(0.5, 0.9)
 
-        loss = 'categorical_crossentropy'
-        adam_optimizer = keras.optimizers.Adam(lr=lr , decay=lr_decay)
-        sgd_optimizer  = keras.optimizers.SGD(lr=lr, decay=lr_decay, momentum=momentum)
-        optimizers     = {'adam':adam_optimizer, 'sgd': sgd_optimizer}
-        optimizer_name = random.choice(['adam', 'sgd'])
-        optimizer = optimizers[optimizer_name]
+    loss = 'categorical_crossentropy'
+    adam_optimizer = keras.optimizers.Adam(lr=lr , decay=lr_decay)
+    sgd_optimizer  = keras.optimizers.SGD(lr=lr, decay=lr_decay, momentum=momentum)
+    optimizers     = {'adam':adam_optimizer, 'sgd': sgd_optimizer}
+    optimizer_name = random.choice(['adam', 'sgd'])
+    optimizer = optimizers[optimizer_name]
 
-        #### Model Architecture ###
-        model = Sequential()    
+    #### Model Architecture ###
+    model = Sequential()
+    if (l2_reg == 0):
+        kernel_regularizer = None
+    else:
         kernel_regularizer=regularizers.l2(l2_reg)
 
-        model.add(Dense(units=dense_units, activation='relu', input_dim=input_units, kernel_regularizer=kernel_regularizer))
+    model.add(Dense(units=dense_units, activation='relu', input_dim=input_units, kernel_regularizer=kernel_regularizer))
 
-        for i in range(dense_layers):
-            model.add(Dense(units=dense_units, activation='relu', kernel_regularizer=kernel_regularizer))
+    for i in range(dense_layers):
+        model.add(Dense(units=dense_units, activation='relu', kernel_regularizer=kernel_regularizer))
+        if (dropout != 0):
+            model.add(Dropout(dropout))
 
-        model.add(Dense(units=output_units, activation='softmax'))
-        
-        model.compile(loss=loss, optimizer=optimizer, metrics=['acc'])
-        #plot_model(model, to_file=LOG_DIR + modelname+'.png', show_shapes=True)
-        
-        logName = modelname + "-lr_{:.2}-dec_{:.2}-l_{}-u_{}-reg_{:.2}-drop_{:.2}-mom_{:.2}-opt_{}".format(lr,lr_decay,dense_layers,dense_units, l2_reg, dropout, momentum, optimizer_name)
-        print(logName)
+    model.add(Dense(units=output_units, activation='softmax'))
+    
+    model.compile(loss=loss, optimizer=optimizer, metrics=['acc'])
+    #plot_model(model, to_file=LOG_DIR + modelname+'.png', show_shapes=True)
+    
+    modelname = modelname + "-lr_{:.2}-dec_{:.2}-l_{}-u_{}-reg_{:.2}-drop_{:.2}-mom_{:.2}-opt_{}".format(lr,lr_decay,dense_layers,dense_units, l2_reg, dropout, momentum, optimizer_name)
+    print(modelname)
 
-    exit()
     return model, modelname
 
 def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
@@ -430,8 +432,8 @@ def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
     bg_val   = DataGenerator(x_val, y_val, 'val')
 
     epochs = 50
-    checkpoint = ModelCheckpoint(modelname, monitor='loss', verbose=1, save_best_only=True, mode='auto')
-    #earlystop = EarlyStopping(monitor='loss', min_delta=0.01, patience=4, verbose=0, mode='auto', baseline=None, restore_best_weights=True)
+    checkpoint = ModelCheckpoint(LOG_DIR + modelname + "/model.h5", monitor='loss', verbose=1, save_best_only=True, mode='auto', period=2)
+    #earlystop = EarlyStopping(monitor='loss', min_delta=0.0001, patience=10, verbose=0, mode='auto', baseline=None, restore_best_weights=True)
     tensorboard = keras.callbacks.TensorBoard(log_dir=LOG_DIR + modelname)
     callbacks_list = [checkpoint, tensorboard]
 
@@ -476,14 +478,13 @@ def NNSaveModel(model, modelname, hist):
     plt.show()
     """
 
-def ComputeAccuracy(model, x, y, testset):
+def ComputeAccuracy(model, thr, x, y, testset):
     print("")
     print("***** Evaluating " + testset + " Accuracy *****")
     bg_test  = DataGenerator(x, y, testset)
 
     j=0
     err = 0
-    thr = 1
     for i in range(len(x)):
         imgs, labels = next(bg_test)
         predictions = model.predict(imgs)
@@ -505,11 +506,17 @@ def ComputeAccuracy(model, x, y, testset):
 def main():    
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--load", help="Load and fit existing model")
+    parser.add_argument("--load", action="store_true", help="Load and fit existing model")
     parser.add_argument("--fit", type=int, help="Create and fit a new model for <n> times")
+    parser.add_argument("--estimate", type=int, help = "Estimate the model on train/val/test sets with <thr> threshold")
     parser.add_argument("modelname", help = "Model name")
-    args = parser.parse_args()
 
+    try:
+        args = parser.parse_args()
+    except:
+        parser.print_help(sys.stderr)
+        exit()
+    
     modelname = args.modelname
     
     dataset = importDataset(DATASET_FILENAME)
@@ -523,7 +530,9 @@ def main():
 
     if (args.load):
         print("> Loading existing NN model " + modelname)        
-        model = load_model(modelname)     
+        model = load_model(LOG_DIR+modelname+"/model.h5")     
+        print("> Fitting model " + modelname)
+        model, hist = NNFitModel(model, modelname, x_train, y_train, x_val, y_val)
         model.save_weights(modelname+'_weights.h5')
     elif (args.fit):            
         if os.path.isdir(OUTPUT_DIR) and ((len(x_batch_list) == NUM_BATCH) and (len(y_batch_list) == NUM_BATCH)):
@@ -532,19 +541,21 @@ def main():
             print("> Some batch data elements are missing or number of batch has changed")        
             BatchDataGeneration(dataset)
         
+        
         for i in range(args.fit):
-            print("> Generating new NN model...")
-            model, modelname = NNCreateModel(modelname)
-            print("> Fitting model " + modelname)
-            model, hist = NNFitModel(model, modelname, x_train, y_train, x_val, y_val)
-            NNSaveModel(model, modelname, hist)
-
-    """    
-    # Calculate custom accuracy over the sets
-    ComputeAccuracy(model, x_train, y_train, 'Train')
-    ComputeAccuracy(model, x_val, y_val, 'Val')
-    ComputeAccuracy(model, x_test, y_test, 'Test')
-    """
+            logName = modelname
+            print("> Generating new NN model {}/{}...".format(i+1, args.fit))
+            model, logName = NNCreateModel(logName)
+            print("> Fitting model " + logName)
+            model, hist = NNFitModel(model, logName, x_train, y_train, x_val, y_val)
+            #NNSaveModel(model, logName, hist)
+    elif (args.estimate):
+        print("> Loading existing NN model " + modelname)        
+        model = load_model(LOG_DIR+modelname+"/model.h5")
+        # Calculate custom accuracy over the sets
+        ComputeAccuracy(model, args.estimate, x_train, y_train, 'Train')
+        ComputeAccuracy(model, args.estimate, x_val, y_val, 'Val')
+        ComputeAccuracy(model, args.estimate, x_test, y_test, 'Test')
             
 if __name__ == "__main__":
     main()
