@@ -10,6 +10,8 @@ from multiprocessing import Queue
 import collections
 import glob
 import random
+import argparse
+
 
 import cv2
 import numpy as np
@@ -36,8 +38,8 @@ DATA_X_FILENAME = OUTPUT_DIR + 'data_x'
 DATA_Y_FILENAME = OUTPUT_DIR + 'data_y'
 NUMPY_EXT = '.npy'
 
-CAMERA_WIDTH = 320
-CAMERA_HEIGHT = 240
+CAMERA_WIDTH = 64
+CAMERA_HEIGHT = 64
 
 NUM_THREADS = 4
 NUM_BATCH = 128
@@ -501,50 +503,48 @@ def ComputeAccuracy(model, x, y, testset):
     print("labels " + str(y_idx))
     
 def main():    
-    modelname=""
-    if len(sys.argv) > 1:
-        modelname = sys.argv[1]
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--load", help="Load and fit existing model")
+    parser.add_argument("--fit", type=int, help="Create and fit a new model for <n> times")
+    parser.add_argument("modelname", help = "Model name")
+    args = parser.parse_args()
+
+    modelname = args.modelname
     
     dataset = importDataset(DATASET_FILENAME)
     
     x_batch_list = sorted(glob.glob(DATA_X_FILENAME+'*'))
     y_batch_list = sorted(glob.glob(DATA_Y_FILENAME+'*'))
 
-    if (os.path.isfile(modelname)):
+    # Split dataset in train/val/test sets
+    x_train, x_test, y_train, y_test = train_test_split(x_batch_list, y_batch_list, test_size = .1, shuffle=False)
+    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size = .1, shuffle=False)
+
+    if (args.load):
         print("> Loading existing NN model " + modelname)        
         model = load_model(modelname)     
-        model.save_weights(modelname+'_weights.h5')           
-    else:        
-        print("> Generating new NN model...")
-    
+        model.save_weights(modelname+'_weights.h5')
+    elif (args.fit):            
         if os.path.isdir(OUTPUT_DIR) and ((len(x_batch_list) == NUM_BATCH) and (len(y_batch_list) == NUM_BATCH)):
             print("> Found already existing batch files")
         else:
             print("> Some batch data elements are missing or number of batch has changed")        
             BatchDataGeneration(dataset)
         
-        model, modelname = NNCreateModel(modelname) 
-      
-    # Split dataset in train/val/test sets
-    x_train, x_test, y_train, y_test = train_test_split(x_batch_list, y_batch_list, test_size = .1, shuffle=False)
-    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size = .1, shuffle=False)
+        for i in range(args.fit):
+            print("> Generating new NN model...")
+            model, modelname = NNCreateModel(modelname)
+            print("> Fitting model " + modelname)
+            model, hist = NNFitModel(model, modelname, x_train, y_train, x_val, y_val)
+            NNSaveModel(model, modelname, hist)
 
-    if sys.argv[2] == "1":
-        print("> Fitting model "+ modelname)
-        model, hist = NNFitModel(model, modelname, x_train, y_train, x_val, y_val)
-        NNSaveModel(model, modelname, hist)
-    
-    """if (os.path.isfile(modelname+'.hist')):
-        print("> Load previous history file")
-        prev_hist = json.load(open(modelname+'.hist', 'r'))
-        prev_hist.update(hist)
-    """
-    
+    """    
     # Calculate custom accuracy over the sets
     ComputeAccuracy(model, x_train, y_train, 'Train')
     ComputeAccuracy(model, x_val, y_val, 'Val')
     ComputeAccuracy(model, x_test, y_test, 'Test')
-    
+    """
             
 if __name__ == "__main__":
     main()
