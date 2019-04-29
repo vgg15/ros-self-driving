@@ -47,7 +47,7 @@ NUM_BATCH = 128
 DATASET_FOLDER = 'bag_output_rec3/'
 DATASET_FILENAME = DATASET_FOLDER  + 'data.txt'
 
-ANGLE_RESOLUTION = 0.2
+ANGLE_RESOLUTION = 0.5
 
 # Global variable - DO NOT MANUALLY MODIFY!
 LABELS_MIN = 0
@@ -386,13 +386,13 @@ def NNCreateModel(modelname):
         
 
     ### Hyper-parameters tuning ###
-    lr           = 0.0012 #10**random.uniform(-4,-1)    
-    lr_decay     = 0.00028 #10**random.uniform(-4,-1)
-    dense_layers = 5 #random.randint(1, 5)
-    dense_units  = 833 #random.randint(32, 1024) 
+    lr           = 10**random.uniform(-4,-1)    
+    lr_decay     = 10**random.uniform(-4,-1)
+    dense_layers = random.randint(2, 5)
+    dense_units  = random.randint(32, 1024) 
     l2_reg       = 10**random.uniform(-4, -2)
     dropout      = random.uniform(0.1, 0.3)
-    momentum     = 0.66 #random.uniform(0.5, 0.9)
+    momentum     = random.uniform(0.5, 0.9)
 
     loss = 'categorical_crossentropy'
     adam_optimizer = keras.optimizers.Adam(lr=lr , decay=lr_decay)
@@ -432,10 +432,10 @@ def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
     bg_val   = DataGenerator(x_val, y_val, 'val')
 
     epochs = 50
-    checkpoint = ModelCheckpoint(LOG_DIR + modelname + "/model.h5", monitor='loss', verbose=1, save_best_only=True, mode='auto', period=2)
-    #earlystop = EarlyStopping(monitor='loss', min_delta=0.0001, patience=10, verbose=0, mode='auto', baseline=None, restore_best_weights=True)
+    checkpoint = ModelCheckpoint(LOG_DIR + modelname + "/model.h5", monitor='loss', verbose=1, save_best_only=True, mode='auto', period=5)
+    earlystop = EarlyStopping(monitor='loss', min_delta=0.0001, patience=10, verbose=0, mode='auto', baseline=None, restore_best_weights=True)
     tensorboard = keras.callbacks.TensorBoard(log_dir=LOG_DIR + modelname)
-    callbacks_list = [checkpoint, tensorboard]
+    callbacks_list = [checkpoint, tensorboard, earlystop]
 
     hist = History()
     train_steps = len(x_train)
@@ -452,7 +452,7 @@ def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
 def NNSaveModel(model, modelname, hist):
     # Save the model    
     model.save(LOG_DIR+modelname)
-    #model.save_weights(modelname+'_weights.h5')
+    #model.plot(modelname+'_weights.h5')
 
     #json.dump(hist, open(modelname+".hist", 'w'))
 
@@ -549,7 +549,7 @@ def main():
             print("> Fitting model " + logName)
             model, hist = NNFitModel(model, logName, x_train, y_train, x_val, y_val)
             #NNSaveModel(model, logName, hist)
-    elif (args.estimate):
+    elif (args.estimate >= 0):
         print("> Loading existing NN model " + modelname)        
         model = load_model(LOG_DIR+modelname+"/model.h5")
         # Calculate custom accuracy over the sets
