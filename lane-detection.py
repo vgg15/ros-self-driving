@@ -26,14 +26,14 @@ import matplotlib.pyplot as plt
 
 import keras
 from keras import regularizers
-from keras.layers import Dense, Dropout
+from keras.layers import *
 from keras.models import Sequential
 from keras.callbacks import *
 from keras.utils import plot_model
 from keras.models import load_model
 
 LOG_DIR = 'logs/'
-OUTPUT_DIR = 'output_64x64px_nopersp/'
+OUTPUT_DIR = 'output_64x64px_rgb/'
 DATA_X_FILENAME = OUTPUT_DIR + 'data_x'
 DATA_Y_FILENAME = OUTPUT_DIR + 'data_y'
 NUMPY_EXT = '.npy'
@@ -82,16 +82,16 @@ class PreProcessingThread (Thread):
             img = str(row[0])
             angle = float(row[1])    
             
-            # open image in b&w
+            # open image
             frame = cv2.imread(DATASET_FOLDER+img)
 
             # resize frame
-            frame = cv2.resize(frame,(CAMERA_WIDTH,CAMERA_HEIGHT))
+            frame = cv2.resize(frame,(CAMERA_WIDTH, CAMERA_HEIGHT))
 
             # apply threshold
-            ret, frame = cv2.threshold(frame, 70, 255, cv2.THRESH_BINARY)
+            #ret, frame = cv2.threshold(frame, 70, 255, cv2.THRESH_BINARY)
             
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            #frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
             #pts1 = np.float32([[125,30],[CAMERA_WIDTH-128,30],[0,CAMERA_HEIGHT-60],[CAMERA_WIDTH,CAMERA_HEIGHT-60]])
             #pts2 = np.float32([[0,0],[CAMERA_WIDTH,0],[0,CAMERA_HEIGHT],[CAMERA_WIDTH,CAMERA_HEIGHT]])
@@ -100,9 +100,9 @@ class PreProcessingThread (Thread):
             #frame = cv2.warpPerspective(frame,M,(CAMERA_WIDTH,CAMERA_HEIGHT))
 
             # unroll
-            frame = np.reshape(frame, (1,CAMERA_WIDTH*CAMERA_HEIGHT))
+            #frame = np.reshape(frame, (1,CAMERA_WIDTH*CAMERA_HEIGHT))
             
-            self.xlist.append(frame[0,:])
+            self.xlist.append(frame)
             self.ylist.append(angle)
 
             i = i + 1    
@@ -162,9 +162,8 @@ def DataGenerator(batch_x, batch_y, dataset_name):
         #print("generator " + dataset_name + ": "+str(batch_x[loopiter]) + " " + str(batch_y[loopiter]))
         img = np.load(batch_x[loopiter])
         img = img/255.0
-        #img = img.reshape(img.shape[0], CAMERA_WIDTH, CAMERA_HEIGHT, 1)
+        
         labels = np.load(batch_y[loopiter])
-
         labels = encodeLabels(labels, NUM_OUTPUT_CLASSES)
         
         loopiter = loopiter + 1
@@ -386,20 +385,33 @@ def NNCreateModel(modelname):
         
 
     ### Hyper-parameters tuning ###
+    # Optimizer
     lr           = 10**random.uniform(-4,-1)    
     lr_decay     = 10**random.uniform(-4,-1)
-    dense_layers = random.randint(2, 5)
-    dense_units  = random.randint(32, 1024) 
-    l2_reg       = 10**random.uniform(-4, -2)
-    dropout      = random.uniform(0.1, 0.3)
     momentum     = random.uniform(0.5, 0.9)
-
-    loss = 'categorical_crossentropy'
     adam_optimizer = keras.optimizers.Adam(lr=lr , decay=lr_decay)
     sgd_optimizer  = keras.optimizers.SGD(lr=lr, decay=lr_decay, momentum=momentum)
     optimizers     = {'adam':adam_optimizer, 'sgd': sgd_optimizer}
     optimizer_name = random.choice(['adam', 'sgd'])
     optimizer = optimizers[optimizer_name]
+    
+    # Conv2D
+    filters = []
+    filter_size = []
+    stride = []
+    conv_layers  = random.randint(1,3)
+    for i in range(conv_layers):
+        filters.append(random.randint(5, 16))
+        filter_size.append(random.choice([3,5, 7]))
+        stride.append(random.randint(1,3))
+
+    # Dense
+    dense_layers = random.randint(1, 3)
+    dense_units  = random.randint(32, 1024)     
+    l2_reg       = 0.0 #10**random.uniform(-4, -2)
+    dropout      = 0.0 #random.uniform(0.1, 0.3)
+
+    loss = 'categorical_crossentropy'
 
     #### Model Architecture ###
     model = Sequential()
@@ -408,9 +420,15 @@ def NNCreateModel(modelname):
     else:
         kernel_regularizer=regularizers.l2(l2_reg)
 
-    model.add(Dense(units=dense_units, activation='relu', input_dim=input_units, kernel_regularizer=kernel_regularizer))
+    # Convolutional layers
+    model.add(Conv2D(filters[0], filter_size[0], strides = stride[0], input_shape = (CAMERA_HEIGHT, CAMERA_WIDTH, 3), padding='valid', data_format="channels_last", activation='relu', use_bias=True))
+    for i in range(1, conv_layers):
+        model.add(Conv2D(filters[i], filter_size[i], strides = stride[i], padding='valid', data_format="channels_last", activation='relu', use_bias=True))
 
-    for i in range(dense_layers):
+    model.add(Flatten())
+
+    # Dense layers
+    for _ in range(dense_layers):
         model.add(Dense(units=dense_units, activation='relu', kernel_regularizer=kernel_regularizer))
         if (dropout != 0):
             model.add(Dropout(dropout))
@@ -418,9 +436,11 @@ def NNCreateModel(modelname):
     model.add(Dense(units=output_units, activation='softmax'))
     
     model.compile(loss=loss, optimizer=optimizer, metrics=['acc'])
-    #plot_model(model, to_file=LOG_DIR + modelname+'.png', show_shapes=True)
     
-    modelname = modelname + "-lr_{:.2}-dec_{:.2}-l_{}-u_{}-reg_{:.2}-drop_{:.2}-mom_{:.2}-opt_{}".format(lr,lr_decay,dense_layers,dense_units, l2_reg, dropout, momentum, optimizer_name)
+    modelname = modelname + "-lr_{:.2}-dec_{:.2}-CL_{}-f_{}-fs_{}-s_{}-DL_{}-u_{}-reg_{:.2}-drop_{:.2}-mom_{:.2}-opt_{}".format(
+        lr, lr_decay, conv_layers, str(filters), str(filter_size), str(stride), dense_layers, dense_units, l2_reg, dropout, momentum, optimizer_name)
+    modelname = modelname.replace('[', '_').replace(' ', '_').replace(',', '')
+
     print(modelname)
 
     return model, modelname
@@ -431,7 +451,7 @@ def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
     bg_train = DataGenerator(x_train, y_train, 'train')
     bg_val   = DataGenerator(x_val, y_val, 'val')
 
-    epochs = 50
+    epochs = 10
     checkpoint = ModelCheckpoint(LOG_DIR + modelname + "/model.h5", monitor='loss', verbose=1, save_best_only=True, mode='auto', period=5)
     earlystop = EarlyStopping(monitor='loss', min_delta=0.0001, patience=10, verbose=0, mode='auto', baseline=None, restore_best_weights=True)
     tensorboard = keras.callbacks.TensorBoard(log_dir=LOG_DIR + modelname)
@@ -446,6 +466,8 @@ def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
         validation_steps=val_steps,
         epochs=epochs,
         callbacks=callbacks_list)        
+
+    plot_model(model, to_file=LOG_DIR + modelname+'/model.png', show_shapes=True)
 
     return (model, hist.history)
 

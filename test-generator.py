@@ -5,7 +5,7 @@ from sklearn.model_selection  import train_test_split
 import cv2
 
 ANGLE_STEPS = 21
-OUTPUT_DIR = 'output_64x64px_nopersp/'
+OUTPUT_DIR = 'output_64x64px_rgb/'
 DATA_X_FILENAME = OUTPUT_DIR + 'data_x'
 DATA_Y_FILENAME = OUTPUT_DIR + 'data_y'
 
@@ -69,9 +69,9 @@ bg_train = BatchGenerator(x_train, y_train, 'train')
 x_old = np.zeros((1,64*64))
 for i in range(100):
     x, y = next(bg_train)
-    img = np.reshape(x[i], (64,64))
+    #img = np.reshape(x[i], (64,64))
     label = decodeLabels(y, NUM_OUTPUT_CLASSES)
-    cv2.imshow("{:.2}".format(label[i]), img)
+    cv2.imshow("{:.2}".format(label[i]), x[i])
     if cv2.waitKey(0) == 27:
         exit()
     cv2.destroyAllWindows()
