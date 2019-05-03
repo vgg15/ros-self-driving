@@ -1,5 +1,9 @@
 import numpy as np
 import random
+import keras
+from keras.layers import *
+from keras.models import Sequential
+
 # now execute the q learning
 
 def encodeLabels(labels, num_classes):
@@ -22,9 +26,15 @@ def main():
     hidden_units = num_states*2
 
     target_state = 2
-    rewards = [0, 0, 1, 0, 0]
+    rewards = [0, 0, 5, 0, 0]
     correction = np.linspace(-1,1,num_actions)
     q_table = np.zeros((num_states, num_actions))
+
+    model = Sequential()
+    model.add(InputLayer(batch_input_shape=(1, num_states)))
+    model.add(Dense(hidden_units, activation='relu'))
+    model.add(Dense(num_actions, activation='linear'))
+    model.compile(loss='mse', optimizer='adam', metrics=['mae'])
 
     s = 0
     a = 0
@@ -37,7 +47,7 @@ def main():
     done = False
     steps = 0
     while(done==False):
-    #for _ in range(20000):
+    #for _ in range(2000):
         # get reward
         new_s = np.argmax(encodeLabels(new_angle, 5))
 
@@ -45,8 +55,12 @@ def main():
         print("State: {}, angle: {:.2}, correction: {}, new_angle: {:.1}, reward: {}, i: {}".format(new_s, angle, correction[a], new_angle, r, i))
 
         # apply reinforcement learning
-        q_table[s, a] += r + lr * (y * np.max(q_table[new_s, :]) - q_table[s, a])
-        #q_table[s, a] += r 
+        target = r + y * np.max(model.predict(np.identity(num_states)[new_s:new_s + 1]))
+        target_vec = model.predict(np.identity(num_states)[s:s + 1])[0]
+        target_vec[a] = target
+        model.fit(np.identity(num_states)[s:s + 1], target_vec.reshape(-1, num_actions), epochs=1, verbose=0)
+        q_table[s,a] += r
+
         s = new_s
         # predict new angle
         # angle = model.predict(frame)
@@ -55,10 +69,10 @@ def main():
         s = np.argmax(encodeLabels(angle, 5))
 
         # get new action
-        if np.random.random() < eps or np.sum(q_table[s,:]) == 0:
+        if np.random.random() < eps:
             a = np.random.randint(0, num_actions)
         else:
-            a = np.argmax(q_table[s, :])
+            a = np.argmax(model.predict(np.identity(num_states)[s:s + 1]))
 
         # get corrective angle based on the action
         new_angle = angle + correction[a]
@@ -75,7 +89,7 @@ def main():
     print(q_table)
     idxs = np.argmax(q_table, axis=1)
     print(idxs)
-    print(np.sum(abs(idxs-[4,3,2,1, 0])))
+    print(np.sum(abs(idxs-[4,3,2,1, 0])))        
     print("steps {}".format(steps))
 
 if "__main__" == __name__:
