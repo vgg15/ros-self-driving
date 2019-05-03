@@ -21,6 +21,7 @@ from sklearn.preprocessing import MaxAbsScaler
 from sklearn.model_selection  import train_test_split
 from sklearn.preprocessing import minmax_scale
 from sklearn.metrics import accuracy_score
+from sklearn.metrics import precision_recall_fscore_support
 
 import matplotlib.pyplot as plt
 
@@ -386,30 +387,27 @@ def NNCreateModel(modelname):
 
     ### Hyper-parameters tuning ###
     # Optimizer
-    lr           = 10**random.uniform(-4,-1)    
-    lr_decay     = 10**random.uniform(-4,-1)
-    momentum     = random.uniform(0.5, 0.9)
+    lr             = 0.0006 #10**random.uniform(-4,-1)    
+    lr_decay       = 0.00016 #10**random.uniform(-4,-1)
+    momentum       = 0.72 #random.uniform(0.5, 0.9)
     adam_optimizer = keras.optimizers.Adam(lr=lr , decay=lr_decay)
     sgd_optimizer  = keras.optimizers.SGD(lr=lr, decay=lr_decay, momentum=momentum)
     optimizers     = {'adam':adam_optimizer, 'sgd': sgd_optimizer}
     optimizer_name = random.choice(['adam', 'sgd'])
-    optimizer = optimizers[optimizer_name]
+    optimizer      = optimizers[optimizer_name]
     
     # Conv2D
-    filters = []
-    filter_size = []
-    stride = []
-    conv_layers  = random.randint(1,3)
-    for i in range(conv_layers):
-        filters.append(random.randint(5, 16))
-        filter_size.append(random.choice([3,5, 7]))
-        stride.append(random.randint(1,3))
+    filters      = 32 #random.choice([8, 16, 32])
+    filter_size  = 3 #random.choice([3, 5, 7])
+    stride       = 1 #random.randint(1,3)
+    conv_layers  = 1 #random.randint(1,3)
+    padding      = 'valid' #'same'
 
     # Dense
-    dense_layers = random.randint(1, 3)
-    dense_units  = random.randint(32, 1024)     
-    l2_reg       = 0.0 #10**random.uniform(-4, -2)
-    dropout      = 0.0 #random.uniform(0.1, 0.3)
+    dense_layers = 2 #random.randint(1, 3)
+    dense_units  = random.randint(32, 512)     
+    l2_reg       = 10**random.uniform(-3, -2)
+    dropout      = random.uniform(0.1, 0.3)
 
     loss = 'categorical_crossentropy'
 
@@ -421,9 +419,14 @@ def NNCreateModel(modelname):
         kernel_regularizer=regularizers.l2(l2_reg)
 
     # Convolutional layers
-    model.add(Conv2D(filters[0], filter_size[0], strides = stride[0], input_shape = (CAMERA_HEIGHT, CAMERA_WIDTH, 3), padding='valid', data_format="channels_last", activation='relu', use_bias=True))
+    model.add(Conv2D(filters, filter_size, strides = stride, input_shape = (CAMERA_HEIGHT, CAMERA_WIDTH, 3), 
+            padding=padding, data_format="channels_last", activation='relu', use_bias=True, kernel_regularizer=kernel_regularizer))
     for i in range(1, conv_layers):
-        model.add(Conv2D(filters[i], filter_size[i], strides = stride[i], padding='valid', data_format="channels_last", activation='relu', use_bias=True))
+        filters *= 2
+        model.add(Conv2D(filters, filter_size, strides = stride,
+            padding='valid', data_format="channels_last", activation='relu', use_bias=True, kernel_regularizer=kernel_regularizer))
+        if ((i+1) % 2) == 0:
+            model.add(MaxPooling2D(pool_size=(3,3), strides=2, data_format='channels_last'))
 
     model.add(Flatten())
 
@@ -438,7 +441,7 @@ def NNCreateModel(modelname):
     model.compile(loss=loss, optimizer=optimizer, metrics=['acc'])
     
     modelname = modelname + "-lr_{:.2}-dec_{:.2}-CL_{}-f_{}-fs_{}-s_{}-DL_{}-u_{}-reg_{:.2}-drop_{:.2}-mom_{:.2}-opt_{}".format(
-        lr, lr_decay, conv_layers, str(filters), str(filter_size), str(stride), dense_layers, dense_units, l2_reg, dropout, momentum, optimizer_name)
+        lr, lr_decay, conv_layers, filters, (filter_size), (stride), dense_layers, dense_units, l2_reg, dropout, momentum, optimizer_name)
     modelname = modelname.replace('[', '_').replace(' ', '_').replace(',', '')
 
     print(modelname)
@@ -451,10 +454,10 @@ def NNFitModel(model, modelname, x_train, y_train, x_val, y_val):
     bg_train = DataGenerator(x_train, y_train, 'train')
     bg_val   = DataGenerator(x_val, y_val, 'val')
 
-    epochs = 10
+    epochs = 20
     checkpoint = ModelCheckpoint(LOG_DIR + modelname + "/model.h5", monitor='loss', verbose=1, save_best_only=True, mode='auto', period=5)
     earlystop = EarlyStopping(monitor='loss', min_delta=0.0001, patience=10, verbose=0, mode='auto', baseline=None, restore_best_weights=True)
-    tensorboard = keras.callbacks.TensorBoard(log_dir=LOG_DIR + modelname)
+    tensorboard = keras.callbacks.TensorBoard(log_dir=LOG_DIR + modelname, write_images = True)
     callbacks_list = [checkpoint, tensorboard, earlystop]
 
     hist = History()
@@ -507,6 +510,9 @@ def ComputeAccuracy(model, thr, x, y, testset):
 
     j=0
     err = 0
+    y = []
+    p = []
+
     for i in range(len(x)):
         imgs, labels = next(bg_test)
         predictions = model.predict(imgs)
@@ -514,17 +520,27 @@ def ComputeAccuracy(model, thr, x, y, testset):
         p_idx = np.argmax(predictions, axis=1)
         y_idx = np.argmax(labels, axis=1)
 
+        y.extend(y_idx)
+        p.extend(p_idx)
+        
         diff = abs(p_idx-y_idx)
         diff = (diff>thr)*1
         err=err+np.sum(diff)
         j=j+len(predictions)
 
+    print("")
+    if testset == 'Test':
+        print("pred " + str(p_idx))
+        print("")
+        print("labels " + str(y_idx))
+    print("Metrics: ")
     print(testset + " Acc : %.4f" % (1-float(err)/j))
-    print("")
-    print("pred " + str(p_idx))
-    print("")
-    print("labels " + str(y_idx))
-    
+    #print(accuracy_score(y,p, normalize=True, sample_weight=None))
+    prec, recall, fscore, _ = precision_recall_fscore_support(y,p, average='macro')
+    print("Precision: " + str(prec))
+    print("Recall: " + str(recall))
+    print("F-score: " + str(fscore))
+
 def main():    
 
     parser = argparse.ArgumentParser()
@@ -573,7 +589,7 @@ def main():
             #NNSaveModel(model, logName, hist)
     elif (args.estimate >= 0):
         print("> Loading existing NN model " + modelname)        
-        model = load_model(LOG_DIR+modelname+"/model.h5")
+        model = load_model(modelname)
         # Calculate custom accuracy over the sets
         ComputeAccuracy(model, args.estimate, x_train, y_train, 'Train')
         ComputeAccuracy(model, args.estimate, x_val, y_val, 'Val')
