@@ -12,13 +12,15 @@ def encodeLabels(labels, num_classes):
 
     return y
 
-    
+def af(s):
+    return -s+4
+
 def main():
     num_states = 5
     num_actions = 5
     correction = np.linspace(-1,1,num_actions)
 
-    rewards = [0, 0, 2, 0, 0] # TODO: Generalize this
+    rewards = [0, 0, 1, 0, 0] # TODO: Generalize this
     steps = 0
     num_steps = 50
     for j in range(num_steps):
@@ -29,7 +31,7 @@ def main():
         a = 0
         target_state = 2
         done = False
-        agent = rl.RLQTable(num_states,num_actions)
+        agent = rl.RLQTable(num_states,num_actions, 0.9, eps = 0.2)
         print("Run {}/{}".format(j,num_steps))
 
         while(done==False):
@@ -51,11 +53,11 @@ def main():
             angle = random.uniform(-1,1)
             s = np.argmax(encodeLabels(angle, 5))
 
-            a = agent.Act(s)
+            a = agent.Act(s, af)
 
             # get corrective angle based on the action
             new_angle = angle + correction[a]
-            if (i == 10):
+            if (i == 30):
                 done = True
             if (new_s == target_state):
                 i += 1
